@@ -1,0 +1,182 @@
+---
+title: "POST /api/v1/ingest/orders"
+sidebarTitle: "Order Lines"
+description: "Send product-level order lines to Restaurantero Pro. Each line feeds menu engineering, Star Employees rankings, and sales-by-category analytics."
+---
+
+Use this endpoint to send individual product-level order lines for the shift. Unlike the sales summary, which gives totals, order lines give Restaurantero Pro the product-level detail it needs to power menu engineering (the Star/Puzzle/Plowhorse/Dog matrix), Star Employees waiter rankings, and sales-by-category breakdowns in the operator dashboard. Each line in the array creates an independent database row. Send this endpoint first, before discounts, cancellations, payments, sales, and the cash register cut.
+
+<Warning>
+  The `waiter_name` field on each line is essential for the **Star Employees** ranking in the operator dashboard. If you omit it, the waiter performance module will have no data to display. Always send the full name of the waiter who took the order.
+</Warning>
+
+## Endpoint
+
+```http
+POST https://api.restauranteropro.com/api/v1/ingest/orders
+```
+
+## Required headers
+
+<ParamField header="X-API-Key" type="string" required>
+  Your branch API key.
+</ParamField>
+
+<ParamField header="X-Idempotency-Key" type="string" required>
+  A UUID v4 unique to this orders submission. Append a suffix to the cash register cut's identifier, for example: `{CashRegisterOpening.identifier}-orders`.
+</ParamField>
+
+<ParamField header="Content-Type" type="string" required>
+  Must be `application/json`.
+</ParamField>
+
+## Request body
+
+<ParamField body="data" type="object" required>
+  Top-level wrapper following JSON:API structure.
+
+  <Expandable title="properties" defaultOpen>
+    <ParamField body="data.type" type="string" required>
+      Always `"orders"`.
+    </ParamField>
+
+    <ParamField body="data.attributes" type="object" required>
+      <Expandable title="attributes">
+        <ParamField body="data.attributes.branch_identifier" type="string" required>
+          UUID of the branch sending the data.
+        </ParamField>
+
+        <ParamField body="data.attributes.date" type="string" required>
+          Date of the order data in `YYYY-MM-DD` format.
+        </ParamField>
+
+        <ParamField body="data.attributes.closing_type" type="string" required>
+          Type of cut this submission is associated with: `"xout"` or `"zout"`.
+        </ParamField>
+
+        <ParamField body="data.attributes.lines" type="object[]" required>
+          Array of individual product line items sold during the shift. See the fields table below.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+
+    <ParamField body="data.meta" type="object">
+      <Expandable title="meta fields">
+        <ParamField body="data.meta.pos_name" type="string">
+          Name of the POS sending the data.
+        </ParamField>
+
+        <ParamField body="data.meta.sent_at" type="string">
+          ISO 8601 timestamp of when the request was sent.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Line item fields
+
+Each object in the `lines` array represents a single product sold during the shift.
+
+| Field | Type | Status | Description |
+|-------|------|--------|-------------|
+| `item_name` | string | Required | Name of the dish or product |
+| `quantity` | integer | Required | Quantity sold (positive integer) |
+| `unit_price_cents` | integer | Required | Unit price in centavos |
+| `subtotal_cents` | integer | Required | Subtotal before discounts in centavos |
+| `net_total_cents` | integer | Required | Net total after discounts in centavos |
+| `category_type` | string | Required | Product classification — see category types below |
+| `waiter_name` | string | Recommended | Full name of the waiter who took the order. Powers the Star Employees ranking. |
+| `item_identifier` | uuid | Optional | UUID of the item in your POS — enables cross-referencing with the recipe database |
+| `item_sku` | string | Optional | SKU of the product in your POS |
+| `category` | string | Optional | Category display name (e.g., `"Cortes"`, `"Cocteles"`) |
+| `discount_cents` | integer | Optional | Discount applied to this line in centavos. Defaults to `0`. |
+
+## Category types
+
+The `category_type` field determines which cost and analytics modules receive this line item's data.
+
+| Value | Description | Powers |
+|-------|-------------|--------|
+| `food` | Food items | Food Cost %, Top 10 products, sales by category |
+| `beverage` | Non-alcoholic beverages | Beverage Cost %, Top 10 products |
+| `bar` | Alcoholic beverages | Bar Cost %, Top 10 products |
+| `other` | Uncategorized items | Top 10 products |
+
+<Tip>
+  Use `item_identifier` to pass the UUID from your POS item record. If you've registered recipes in the Restaurantero Pro dashboard, this allows the system to automatically cross-reference sales data with food cost per dish.
+</Tip>
+
+## Request example
+
+```json
+{
+  "data": {
+    "type": "orders",
+    "attributes": {
+      "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+      "date": "2026-05-15",
+      "closing_type": "zout",
+      "lines": [
+        {
+          "item_identifier": "item-uuid-1",
+          "item_sku": "ARRACHERA-01",
+          "item_name": "Arrachera a las Brasas",
+          "category": "Cortes",
+          "category_type": "food",
+          "waiter_name": "Ana García",
+          "quantity": 14,
+          "unit_price_cents": 34500,
+          "subtotal_cents": 483000,
+          "discount_cents": 0,
+          "net_total_cents": 483000
+        },
+        {
+          "item_identifier": "item-uuid-2",
+          "item_sku": "MARGARITA-01",
+          "item_name": "Margarita Clásica",
+          "category": "Cocteles",
+          "category_type": "beverage",
+          "waiter_name": "Luis Herrera",
+          "quantity": 32,
+          "unit_price_cents": 12000,
+          "subtotal_cents": 384000,
+          "discount_cents": 12000,
+          "net_total_cents": 372000
+        }
+      ]
+    },
+    "meta": {
+      "pos_name": "restaurant_controller",
+      "sent_at": "2026-05-15T23:45:00Z"
+    }
+  }
+}
+```
+
+## Response
+
+### 202 Accepted
+
+The order lines were received and queued for processing.
+
+<ResponseField name="data" type="object">
+  <Expandable title="properties" defaultOpen>
+    <ResponseField name="data.type" type="string">
+      Always `"orders-ingest"`.
+    </ResponseField>
+
+    <ResponseField name="data.attributes.queued" type="boolean">
+      `true` when the submission has been accepted and queued.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```json
+{
+  "data": {
+    "type": "orders-ingest",
+    "attributes": { "queued": true }
+  }
+}
+```

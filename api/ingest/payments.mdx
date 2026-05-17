@@ -1,0 +1,196 @@
+---
+title: "POST /api/v1/ingest/payments"
+sidebarTitle: "Payments"
+description: "Send a payment method breakdown to Restaurantero Pro — cash, credit card, debit card, bank transfers, and delivery platform totals for the shift."
+---
+
+Use this endpoint to send a breakdown of how the day's sales were paid. Restaurantero Pro uses this data to build the cash reconciliation report, track cash flow, and detect variances by payment method. Send one entry per payment type with the aggregated totals for the shift. Submit this endpoint before the sales summary and cash register cut.
+
+## Endpoint
+
+```http
+POST https://api.restauranteropro.com/api/v1/ingest/payments
+```
+
+## Required headers
+
+<ParamField header="X-API-Key" type="string" required>
+  Your branch API key.
+</ParamField>
+
+<ParamField header="X-Idempotency-Key" type="string" required>
+  A UUID v4 unique to this payments submission. Append a suffix to the cash register cut's identifier, for example: `{CashRegisterOpening.identifier}-payments`.
+</ParamField>
+
+<ParamField header="Content-Type" type="string" required>
+  Must be `application/json`.
+</ParamField>
+
+## Request body
+
+<ParamField body="data" type="object" required>
+  Top-level wrapper following JSON:API structure.
+
+  <Expandable title="properties" defaultOpen>
+    <ParamField body="data.type" type="string" required>
+      Always `"payments"`.
+    </ParamField>
+
+    <ParamField body="data.attributes" type="object" required>
+      <Expandable title="attributes">
+        <ParamField body="data.attributes.branch_identifier" type="string" required>
+          UUID of the branch sending the data.
+        </ParamField>
+
+        <ParamField body="data.attributes.date" type="string" required>
+          Date of the payment data in `YYYY-MM-DD` format.
+        </ParamField>
+
+        <ParamField body="data.attributes.closing_type" type="string" required>
+          Type of cut this submission is associated with: `"xout"` or `"zout"`.
+        </ParamField>
+
+        <ParamField body="data.attributes.payments" type="object[]" required>
+          Array of payment method totals for the shift. Include one object per payment type used.
+
+          <Expandable title="payment object fields">
+            <ParamField body="payment_type" type="string" required>
+              Payment method identifier. See the payment types table below.
+            </ParamField>
+
+            <ParamField body="payment_type_name" type="string" required>
+              Human-readable name for the payment method (e.g., `"Efectivo"`, `"Tarjeta Crédito"`).
+            </ParamField>
+
+            <ParamField body="amount_cents" type="integer" required>
+              Total amount collected via this payment method, in centavos.
+            </ParamField>
+
+            <ParamField body="tips_cents" type="integer" required>
+              Tips collected via this payment method, in centavos. Send `0` if not applicable.
+            </ParamField>
+
+            <ParamField body="change_cents" type="integer" required>
+              Change returned to customers via this payment method, in centavos. Send `0` for card payments.
+            </ParamField>
+
+            <ParamField body="transaction_count" type="integer" required>
+              Number of individual transactions for this payment method.
+            </ParamField>
+          </Expandable>
+        </ParamField>
+      </Expandable>
+    </ParamField>
+
+    <ParamField body="data.meta" type="object">
+      <Expandable title="meta fields">
+        <ParamField body="data.meta.pos_name" type="string">
+          Name of the POS sending the data.
+        </ParamField>
+
+        <ParamField body="data.meta.sent_at" type="string">
+          ISO 8601 timestamp of when the request was sent.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Payment types
+
+| payment_type | Description |
+|--------------|-------------|
+| `cash` | Cash |
+| `card_credit` | Credit card |
+| `card_debit` | Debit card |
+| `card` | Card (no credit/debit distinction) |
+| `transfer` | Bank transfer / SPEI |
+| `rappi` | Rappi |
+| `uber_eats` | Uber Eats |
+| `didi_food` | DiDi Food |
+| `voucher` | Despensa vouchers |
+| `other` | Other payment method |
+
+## Request example
+
+```json
+{
+  "data": {
+    "type": "payments",
+    "attributes": {
+      "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+      "date": "2026-05-15",
+      "closing_type": "zout",
+      "payments": [
+        {
+          "payment_type": "cash",
+          "payment_type_name": "Efectivo",
+          "amount_cents": 125000,
+          "tips_cents": 8000,
+          "change_cents": 3500,
+          "transaction_count": 18
+        },
+        {
+          "payment_type": "card_credit",
+          "payment_type_name": "Tarjeta Crédito",
+          "amount_cents": 280000,
+          "tips_cents": 15000,
+          "change_cents": 0,
+          "transaction_count": 31
+        },
+        {
+          "payment_type": "card_debit",
+          "payment_type_name": "Tarjeta Débito",
+          "amount_cents": 129550,
+          "tips_cents": 7000,
+          "change_cents": 0,
+          "transaction_count": 23
+        },
+        {
+          "payment_type": "transfer",
+          "payment_type_name": "Transferencia",
+          "amount_cents": 0,
+          "tips_cents": 0,
+          "change_cents": 0,
+          "transaction_count": 0
+        }
+      ]
+    },
+    "meta": {
+      "pos_name": "restaurant_controller",
+      "sent_at": "2026-05-15T23:46:00Z"
+    }
+  }
+}
+```
+
+## Response
+
+### 202 Accepted
+
+The payments breakdown was received and queued for processing.
+
+<ResponseField name="data" type="object">
+  <Expandable title="properties" defaultOpen>
+    <ResponseField name="data.type" type="string">
+      Always `"payments-ingest"`.
+    </ResponseField>
+
+    <ResponseField name="data.attributes.queued" type="boolean">
+      `true` when the submission has been accepted and queued.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```json
+{
+  "data": {
+    "type": "payments-ingest",
+    "attributes": { "queued": true }
+  }
+}
+```
+
+<Note>
+  You can send payment types with `"amount_cents": 0` and `"transaction_count": 0` to explicitly indicate that a payment method was not used during the shift. This helps Restaurantero Pro distinguish between missing data and genuinely zero activity.
+</Note>

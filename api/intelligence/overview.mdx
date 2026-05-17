@@ -1,0 +1,124 @@
+---
+title: "Intelligence endpoints overview"
+sidebarTitle: "Overview"
+description: "All GET intelligence endpoints share common query parameters and response structure. Learn about branch_identifier, date ranges, and period shortcuts."
+---
+
+Every `GET /api/v1/intelligence/*` endpoint shares the same query parameters, response envelope, and benchmark system. Read this page before diving into individual endpoints — understanding these conventions will save you time and prevent common integration mistakes.
+
+## Authentication
+
+All intelligence endpoints require your branch API key in the `X-API-Key` header:
+
+```http
+GET /api/v1/intelligence/kpis?branch_identifier=uuid&period=today
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+## Query parameters
+
+<ParamField query="branch_identifier" type="string" required>
+  UUID of the branch you want to query. Each branch has its own isolated dataset and API key. You receive this UUID during branch onboarding.
+</ParamField>
+
+<ParamField query="date_from" type="string" required>
+  Start of the period in `YYYY-MM-DD` format. Required unless you use the `period` shortcut.
+</ParamField>
+
+<ParamField query="date_to" type="string" required>
+  End of the period in `YYYY-MM-DD` format. Required unless you use the `period` shortcut.
+</ParamField>
+
+<ParamField query="period" type="string">
+  A period shortcut that sets `date_from` and `date_to` automatically. When you provide `period`, you do not need to supply explicit date parameters. Accepted values: `today`, `yesterday`, `week`, `month`.
+</ParamField>
+
+### How period shortcuts work
+
+| Value | Resolves to |
+|---|---|
+| `today` | `date_from` and `date_to` both set to the current calendar date |
+| `yesterday` | `date_from` and `date_to` both set to yesterday's date |
+| `week` | `date_from` = Monday of the current week, `date_to` = today |
+| `month` | `date_from` = first day of the current month, `date_to` = today |
+
+<Tip>
+  Use `period=today` on your POS dashboard widgets for a quick same-day snapshot. For historical reports, supply explicit `date_from` and `date_to` values.
+</Tip>
+
+### Example requests
+
+```http
+GET /api/v1/intelligence/kpis?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890&period=today
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+```http
+GET /api/v1/intelligence/pnl?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890&date_from=2026-05-01&date_to=2026-05-15
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+## Response envelope
+
+All intelligence responses follow the same JSON structure:
+
+```json
+{
+  "data": {
+    "type": "pnl_summary",
+    "attributes": { },
+    "meta": {
+      "period": { "from": "2026-05-01", "to": "2026-05-15" },
+      "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+      "snapshot_date": "2026-05-15T06:00:00Z",
+      "benchmarks": {
+        "food_cost_status": "green",
+        "labor_cost_status": "yellow",
+        "ebitda_status": "green"
+      }
+    }
+  }
+}
+```
+
+<ResponseField name="data" type="object">
+  Top-level data wrapper.
+
+  <Expandable title="properties">
+    <ResponseField name="type" type="string">
+      Identifies the resource type, such as `pnl_summary`, `kpis`, or `sales_summary`.
+    </ResponseField>
+    <ResponseField name="attributes" type="object">
+      The actual payload. Structure varies by endpoint — see each endpoint's page for details.
+    </ResponseField>
+    <ResponseField name="meta" type="object">
+      Metadata about the response including period bounds, branch identifier, snapshot timestamp, and benchmark statuses.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Data availability and the Corte Z
+
+Intelligence data is computed **asynchronously** after the Corte Z (end-of-day register closing) is received. The processing pipeline typically completes within a few seconds of receiving `POST /api/v1/ingest/cash-register` with `closing_type: "zout"`.
+
+<Warning>
+  Intelligence endpoints reflect data from **closed** Corte Z periods only. Data from the current open shift is not included — use the [Live Data endpoints](/api/live/sales) for real-time shift data.
+</Warning>
+
+To know exactly when a day's data is ready without polling, subscribe to the `snapshot.completed` webhook event. Restaurantero Pro fires this event as soon as all cubes for the day have been regenerated.
+
+## Benchmark traffic-light system
+
+Every KPI in a response includes a `status` field that maps to one of three benchmark levels. Benchmarks are based on industry averages for the Mexican restaurant sector.
+
+| Status | Color | Meaning |
+|---|---|---|
+| `green` | Green | KPI is within healthy range — no action needed |
+| `yellow` | Yellow | KPI is in the caution zone — monitor and investigate |
+| `red` | Red | KPI has crossed a risk threshold — immediate action recommended |
+
+<Note>
+  Some informational alerts use `blue` status to signal positive trends (e.g., sales up vs. prior period). Blue is not a benchmark level — it carries no risk implication.
+</Note>
+
+Benchmark thresholds for each KPI are documented on the [KPIs endpoint page](/api/intelligence/kpis).

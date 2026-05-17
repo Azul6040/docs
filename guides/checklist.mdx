@@ -1,0 +1,214 @@
+---
+title: "Integration readiness checklist for Restaurantero Pro"
+description: "Verify all 13 integration requirements before going live: API key setup, idempotency keys, centavo format, waiter_name, retry logic, and sandbox testing."
+---
+
+Before activating a branch in production, verify all 13 items below. Each item corresponds to a concrete behavior in your Restaurant Controller integration. Work through the checklist in order — configuration items first, then data format checks, then behavioral requirements, and finally testing validation.
+
+---
+
+## Configuration
+
+These items must be set before the integration can send any data.
+
+<AccordionGroup>
+  <Accordion title="1. API Key configured" icon="key">
+    `RESTAURANTERO_API_KEY` is set in the RC `.env` file and uses the `rpro_live_` prefix.
+
+    ```bash
+    RESTAURANTERO_API_KEY=rpro_live_xxxxxxxxxxxxxxxxxxxxxxxx
+    ```
+
+    Keys starting with `rpro_test_` are sandbox-only and will fail against the production URL.
+  </Accordion>
+
+  <Accordion title="2. Branch Identifier correct" icon="building">
+    `RESTAURANTERO_BRANCH_IDENTIFIER` is set to the UUID of the specific branch you are connecting — not the brand or group UUID.
+
+    ```bash
+    RESTAURANTERO_BRANCH_IDENTIFIER=b1c2d3e4-f5a6-7890-abcd-ef1234567890
+    ```
+
+    You can find the branch UUID in the Dev Portal under **Settings → Branch**.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Data format
+
+These items ensure the data you send is correctly shaped for the Restaurantero Pro API.
+
+<AccordionGroup>
+  <Accordion title="6. Amounts in centavos" icon="coins">
+    Every `*_cents` field is a plain integer representing centavos — never a float, never a string.
+
+    ```php
+    // Correct
+    'amount_cents' => (int) ($amount * 100),  // e.g. 15000
+
+    // Wrong — returns 422 RPRO_ERR_422_CENTS
+    'amount_cents' => 150.00,
+    ```
+
+    Remember the `unit_price` and `quantity` mutators on `OrderTicketLine`: RC returns these in pesos (divided by 100), so multiply by 100 when building the payload.
+  </Accordion>
+
+  <Accordion title="7. waiter_name on every order line" icon="user">
+    Each line in the orders payload includes `waiter_name` with the full name of the waiter who took the order.
+
+    ```php
+    'waiter_name' => $line->ticket?->order?->waiter?->name
+                  ?? $line->ticket?->order?->user?->name
+                  ?? null,
+    ```
+
+    Without this field, the Star Employees ranking in the owner dashboard will have no data.
+  </Accordion>
+
+  <Accordion title="8. category_type is correct" icon="tag">
+    Every order line has a valid `category_type` value: `food`, `beverage`, `bar`, or `other`. This field controls which cost percentage (Food Cost, Beverage Cost, Bar Cost) each line contributes to.
+
+    | Value | Use for |
+    |---|---|
+    | `food` | All food items |
+    | `beverage` | Non-alcoholic drinks |
+    | `bar` | Alcoholic drinks |
+    | `other` | Unclassified items |
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Trigger and sequencing behavior
+
+These items verify that your integration fires at the right moment and sends data in the required order.
+
+<AccordionGroup>
+  <Accordion title="3. Corte Z detected" icon="bolt">
+    `RestauranteroProService::sendZOut()` is called when `CashRegisterOpening` transitions to status `completed` with type `zout` — and only at that point.
+
+    ```php
+    $isStoredZOut = $closingCategoryType === 'cash_register.closings.zout';
+
+    if ($isStoredZOut) {
+        app(RestauranteroProService::class)->sendZOut($cashRegisterOpening);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="4. Corte X does not send business data" icon="x">
+    When the closing type is `xout` (Corte X), only `POST /ingest/cash-register` is sent with `closing_type: "xout"`. The other five endpoints (orders, discounts, cancellations, payments, sales) are not called.
+
+    Corte X is informational — it does not trigger cube regeneration in Restaurantero Pro.
+  </Accordion>
+
+  <Accordion title="5. Idempotency Keys are unique and stable" icon="fingerprint">
+    The `CashRegisterOpening.identifier` UUID is used as the base idempotency key. Each of the six endpoints gets its own suffixed key derived from the same base:
+
+    ```php
+    'X-Idempotency-Key' => $cashRegisterOpening->identifier,              // cash-register
+    'X-Idempotency-Key' => $cashRegisterOpening->identifier . '-orders',
+    'X-Idempotency-Key' => $cashRegisterOpening->identifier . '-payments',
+    'X-Idempotency-Key' => $cashRegisterOpening->identifier . '-discounts',
+    'X-Idempotency-Key' => $cashRegisterOpening->identifier . '-cancellations',
+    'X-Idempotency-Key' => $cashRegisterOpening->identifier . '-sales',
+    ```
+
+    On retry, use the **same** key. Restaurantero Pro will return `200` with the previous result without re-processing.
+  </Accordion>
+
+  <Accordion title="11. Send order is correct" icon="list-ordered">
+    The six POSTs are sent in this exact order:
+
+    1. `POST /ingest/orders`
+    2. `POST /ingest/discounts`
+    3. `POST /ingest/cancellations`
+    4. `POST /ingest/payments`
+    5. `POST /ingest/sales`
+    6. `POST /ingest/cash-register` ← last, triggers processing
+
+    Sending `cash-register` before the others causes the cubes to regenerate with incomplete data.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Reliability and observability
+
+These items verify that your integration handles failures and produces visible logs.
+
+<AccordionGroup>
+  <Accordion title="9. Retry logic implemented" icon="rotate">
+    The HTTP helper retries each endpoint at least 3 times before marking as failed, with delays between attempts:
+
+    | Attempt | Delay |
+    |---|---|
+    | 1 | Immediate |
+    | 2 | 5 seconds |
+    | 3 | 30 seconds |
+
+    The `RestauranteroProService::post()` method in the [PHP snippet guide](/guides/php-snippet) implements this out of the box.
+  </Accordion>
+
+  <Accordion title="10. Logging is active" icon="file-text">
+    Every POST — successful or failed — is logged via Laravel's `Log` facade.
+
+    | Outcome | Log level |
+    |---|---|
+    | Successful `2xx` | `info` |
+    | Non-`2xx` HTTP response | `warning` |
+    | Network exception | `error` |
+    | All 3 attempts exhausted | `critical` |
+
+    Verify that `info` entries appear in `storage/logs/laravel.log` after a test Corte Z.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Testing and go-live
+
+<AccordionGroup>
+  <Accordion title="12. Tested in Sandbox" icon="flask">
+    At least 3 complete Corte Z cuts have been sent to the sandbox environment (`https://sandbox.restauranteropro.com/api/v1`) with a `rpro_test_xxx` key. Verify in the Dev Portal → Logs that all 6 POSTs returned `202 Accepted` and that the intelligence endpoints return expected data after `snapshot.completed` fires.
+  </Accordion>
+
+  <Accordion title="13. Activated in production" icon="rocket">
+    Both environment variables are switched to production values:
+
+    ```bash
+    RESTAURANTERO_BASE_URL=https://api.restauranteropro.com/api/v1
+    RESTAURANTERO_API_KEY=rpro_live_xxxxxxxxxxxxxxxxxxxxxxxx
+    ```
+
+    Verify the production connection before the first real Corte Z with a ping request:
+
+    ```http
+    GET /api/v1/ping
+    X-API-Key: rpro_live_xxx...
+    ```
+
+    A response of `"status": "ok"` confirms the branch is live.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Quick-reference summary
+
+| # | Item | Category |
+|---|---|---|
+| 1 | `RESTAURANTERO_API_KEY` set with `rpro_live_` prefix | Configuration |
+| 2 | `RESTAURANTERO_BRANCH_IDENTIFIER` is the correct branch UUID | Configuration |
+| 3 | `sendZOut()` fires on `zout` + `completed` only | Trigger |
+| 4 | Corte X sends only `cash-register` with `closing_type: "xout"` | Trigger |
+| 5 | Idempotency Keys use `closing.identifier` as base with per-endpoint suffixes | Idempotency |
+| 6 | All `*_cents` fields are plain integers (no floats) | Data format |
+| 7 | `waiter_name` is present on every order line | Data format |
+| 8 | `category_type` is `food`, `beverage`, `bar`, or `other` on every line | Data format |
+| 9 | HTTP helper retries at least 3 times with backoff | Reliability |
+| 10 | Every POST is logged at the correct level | Observability |
+| 11 | Send order: orders → discounts → cancellations → payments → sales → cash-register | Sequencing |
+| 12 | 3+ Corte Z cuts verified end-to-end in Sandbox | Testing |
+| 13 | Production URL and `rpro_live_` key active | Go-live |

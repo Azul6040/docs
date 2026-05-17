@@ -1,0 +1,182 @@
+---
+title: "POST /api/v1/ingest/sales"
+sidebarTitle: "Sales Summary"
+description: "Send a daily sales summary to Restaurantero Pro, including food vs beverage breakdown, covers served, and average ticket for the shift."
+---
+
+Use this endpoint to send a sales summary for a shift or day to Restaurantero Pro. This data complements the cash register cut by providing a breakdown of food versus beverage sales, the number of covers served, and the average ticket. Submit this endpoint after order lines, discounts, cancellations, and payments — but before the cash register cut.
+
+## Endpoint
+
+```http
+POST https://api.restauranteropro.com/api/v1/ingest/sales
+```
+
+## Required headers
+
+<ParamField header="X-API-Key" type="string" required>
+  Your branch API key.
+</ParamField>
+
+<ParamField header="X-Idempotency-Key" type="string" required>
+  A UUID v4 unique to this sales submission. Append a suffix to the cash register cut's identifier, for example: `{CashRegisterOpening.identifier}-sales`.
+</ParamField>
+
+<ParamField header="Content-Type" type="string" required>
+  Must be `application/json`.
+</ParamField>
+
+## Request body
+
+<ParamField body="data" type="object" required>
+  Top-level wrapper following JSON:API structure.
+
+  <Expandable title="properties" defaultOpen>
+    <ParamField body="data.type" type="string" required>
+      Always `"sales"`.
+    </ParamField>
+
+    <ParamField body="data.attributes" type="object" required>
+      <Expandable title="attributes">
+        <ParamField body="data.attributes.branch_identifier" type="string" required>
+          UUID of the branch sending the data.
+        </ParamField>
+
+        <ParamField body="data.attributes.date" type="string" required>
+          Date of the sales period in `YYYY-MM-DD` format.
+        </ParamField>
+
+        <ParamField body="data.attributes.shift" type="string" required>
+          Shift this summary belongs to. See the shift values table below.
+        </ParamField>
+
+        <ParamField body="data.attributes.closing_type" type="string" required>
+          Type of cut this summary is associated with: `"xout"` or `"zout"`.
+        </ParamField>
+
+        <ParamField body="data.attributes.total_sales_cents" type="integer" required>
+          Total gross sales in centavos.
+        </ParamField>
+
+        <ParamField body="data.attributes.total_sales_no_iva_cents" type="integer" required>
+          Total sales excluding VAT in centavos.
+        </ParamField>
+
+        <ParamField body="data.attributes.food_sales_cents" type="integer" required>
+          Food sales in centavos.
+        </ParamField>
+
+        <ParamField body="data.attributes.beverage_sales_cents" type="integer" required>
+          Non-alcoholic beverage sales in centavos.
+        </ParamField>
+
+        <ParamField body="data.attributes.bar_sales_cents" type="integer">
+          Alcoholic beverage (bar) sales in centavos. Send `0` if not applicable.
+        </ParamField>
+
+        <ParamField body="data.attributes.covers" type="integer" required>
+          Number of guests (pax) served during the shift.
+        </ParamField>
+
+        <ParamField body="data.attributes.tables_served" type="integer">
+          Number of tables served during the shift.
+        </ParamField>
+
+        <ParamField body="data.attributes.avg_ticket_cents" type="integer">
+          Average ticket per cover in centavos.
+        </ParamField>
+
+        <ParamField body="data.attributes.avg_pax_cents" type="integer">
+          Average spend per guest in centavos.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+
+    <ParamField body="data.meta" type="object">
+      <Expandable title="meta fields">
+        <ParamField body="data.meta.pos_name" type="string">
+          Name of the POS sending the data.
+        </ParamField>
+
+        <ParamField body="data.meta.pos_version" type="string">
+          Version of the POS software.
+        </ParamField>
+
+        <ParamField body="data.meta.sent_at" type="string">
+          ISO 8601 timestamp of when the request was sent.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Shift values
+
+| Value | Description |
+|-------|-------------|
+| `breakfast` | Breakfast service |
+| `lunch` | Lunch / comida service |
+| `dinner` | Dinner service |
+| `bar` | Bar / late night |
+| `all_day` | Use when you do not separate sales by shift |
+
+## Request example
+
+```json
+{
+  "data": {
+    "type": "sales",
+    "attributes": {
+      "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+      "date": "2026-05-15",
+      "shift": "dinner",
+      "closing_type": "zout",
+      "total_sales_cents": 534550,
+      "total_sales_no_iva_cents": 461681,
+      "food_sales_cents": 366614,
+      "beverage_sales_cents": 167936,
+      "bar_sales_cents": 0,
+      "covers": 87,
+      "tables_served": 24,
+      "avg_ticket_cents": 6144,
+      "avg_pax_cents": 6144
+    },
+    "meta": {
+      "pos_name": "restaurant_controller",
+      "pos_version": "3.2.1",
+      "sent_at": "2026-05-15T23:46:00Z"
+    }
+  }
+}
+```
+
+## Response
+
+### 202 Accepted
+
+The sales summary was received and queued for processing.
+
+<ResponseField name="data" type="object">
+  <Expandable title="properties" defaultOpen>
+    <ResponseField name="data.type" type="string">
+      Always `"sales-ingest"`.
+    </ResponseField>
+
+    <ResponseField name="data.attributes.queued" type="boolean">
+      `true` when the submission has been accepted and queued.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```json
+{
+  "data": {
+    "type": "sales-ingest",
+    "attributes": { "queued": true }
+  }
+}
+```
+
+<Note>
+  All monetary fields must be integers representing centavos. Never send decimal values. For example, $534.50 MXN should be sent as `53450`.
+</Note>

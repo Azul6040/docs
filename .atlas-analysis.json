@@ -1,0 +1,133 @@
+{
+  "projectType": "api-service",
+  "projectName": "Restaurantero Pro",
+  "projectDescription": "Financial intelligence API for restaurants that connects to any POS and returns real-time P&L, KPIs, menu engineering, and AI-powered insights.",
+  "theme": "luma",
+  "primaryColor": "#E85D2F",
+  "lightColor": "#FDF3EE",
+  "darkColor": "#1A0A05",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "authentication",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/conventions",
+              "concepts/idempotency",
+              "concepts/data-model"
+            ]
+          },
+          {
+            "group": "Integration Guide",
+            "pages": [
+              "guides/integration-flow",
+              "guides/rc-mapping",
+              "guides/php-snippet",
+              "guides/sandbox-testing",
+              "guides/checklist"
+            ]
+          },
+          {
+            "group": "Webhooks",
+            "pages": [
+              "webhooks/overview",
+              "webhooks/events"
+            ]
+          },
+          {
+            "group": "Support",
+            "pages": [
+              "errors",
+              "changelog"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Ingestion",
+            "pages": [
+              "api/ingest/cash-register",
+              "api/ingest/sales",
+              "api/ingest/payments",
+              "api/ingest/orders",
+              "api/ingest/discounts",
+              "api/ingest/cancellations"
+            ]
+          },
+          {
+            "group": "Intelligence",
+            "pages": [
+              "api/intelligence/overview",
+              "api/intelligence/sales-summary",
+              "api/intelligence/pnl",
+              "api/intelligence/kpis",
+              "api/intelligence/food-cost",
+              "api/intelligence/labor-cost",
+              "api/intelligence/alerts",
+              "api/intelligence/menu-engineering",
+              "api/intelligence/purchase-suggestions"
+            ]
+          },
+          {
+            "group": "Live Data",
+            "pages": [
+              "api/live/sales",
+              "api/live/cash-balance",
+              "api/live/alerts"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Real-time P&L (Estado de Resultados) calculated from POS data",
+    "Food Cost, Beverage Cost, and Labor Cost vs industry benchmarks",
+    "Cash ledger (Estado de Cuenta de Efectivo) replacing Excel tracking",
+    "Menu Engineering matrix classifying dishes as Star, Puzzle, Plowhorse, or Dog",
+    "Automated KPI alerts with green/yellow/red traffic-light status",
+    "Star Employees — waiter performance ranking by sales",
+    "Tiendita Inteligente — AI-powered purchase suggestions based on real sales",
+    "Live shift data for real-time manager dashboards",
+    "Webhooks for event-driven integrations",
+    "Idempotent ingestion endpoints to prevent duplicate data"
+  ],
+  "publicApiSurface": [
+    "POST /api/v1/ingest/cash-register",
+    "POST /api/v1/ingest/sales",
+    "POST /api/v1/ingest/payments",
+    "POST /api/v1/ingest/orders",
+    "POST /api/v1/ingest/discounts",
+    "POST /api/v1/ingest/cancellations",
+    "GET /api/v1/intelligence/sales/summary",
+    "GET /api/v1/intelligence/sales/by-hour",
+    "GET /api/v1/intelligence/sales/by-employee",
+    "GET /api/v1/intelligence/sales/reconciliation",
+    "GET /api/v1/intelligence/cash-flow",
+    "GET /api/v1/intelligence/pnl",
+    "GET /api/v1/intelligence/food-cost",
+    "GET /api/v1/intelligence/labor-cost",
+    "GET /api/v1/intelligence/kpis",
+    "GET /api/v1/intelligence/alerts",
+    "GET /api/v1/intelligence/menu/engineering",
+    "GET /api/v1/intelligence/inventory/suggestions",
+    "GET /api/v1/live/sales/today",
+    "GET /api/v1/live/cash/balance",
+    "GET /api/v1/live/alerts/active",
+    "GET /api/v1/ping",
+    "POST /api/v1/developer/webhooks"
+  ]
+}

@@ -1,0 +1,110 @@
+---
+title: "Authenticate requests to Restaurantero Pro"
+description: "Restaurantero Pro uses per-branch API keys. Learn how to obtain your key, pass it in request headers, and handle authentication errors."
+---
+
+Every request to Restaurantero Pro must carry an API key that identifies the branch sending or querying data. Keys are scoped to a single branch — a restaurant group with five locations uses five independent keys, keeping each branch's data fully isolated.
+
+## API key format
+
+Keys follow a consistent format that signals which environment they target:
+
+```
+rpro_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx   ← Production
+rpro_test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx   ← Sandbox
+```
+
+<Warning>
+An API key is shown only once when it is generated. If you lose it, you must generate a new one — the previous key is revoked immediately. Store keys in environment variables, never in source code.
+</Warning>
+
+## How to obtain an API key
+
+<Steps>
+  <Step title="Create an account">
+    The restaurant operator creates an account at `https://api.restauranteropro.com`. During onboarding, the Group, Brand, and Branch records are created for each location.
+  </Step>
+  <Step title="Open API Keys settings">
+    In the dashboard, navigate to **Settings → Integrations → API Keys**.
+  </Step>
+  <Step title="Generate a key for the branch">
+    Select the branch you want to connect and click **Generate key**. Copy the key immediately — it will not be shown again.
+  </Step>
+  <Step title="Add the key to your POS configuration">
+    Paste the key into your POS environment configuration. For Laravel-based systems, set it as an environment variable:
+
+    ```bash
+    RESTAURANTERO_API_KEY=rpro_live_xxxxxxxxxxxxxxxxxxxxxxxx
+    RESTAURANTERO_BRANCH_IDENTIFIER=b1c2d3e4-f5a6-7890-abcd-ef1234567890
+    ```
+  </Step>
+</Steps>
+
+## Sending the API key in requests
+
+Include the key in the `X-API-Key` header on every request. All ingestion endpoints also require `X-Idempotency-Key` and `Content-Type`:
+
+```http
+X-API-Key: rpro_live_abc123xyz789...
+Content-Type: application/json
+X-Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
+```
+
+<Note>
+The `X-Idempotency-Key` header is required on all `POST /api/v1/ingest/*` endpoints. It is not required on `GET` intelligence or live endpoints. See [Idempotent ingestion](/concepts/idempotency) for details.
+</Note>
+
+## OAuth2 bearer token (advanced)
+
+For integrations that require delegated authorization — where the end user explicitly grants your application access to their Restaurantero Pro data — the API also supports OAuth2 bearer tokens:
+
+```http
+Authorization: Bearer {access_token}
+```
+
+The full OAuth2 flow is documented in the Dev Portal. For most POS integrations, the API key approach is simpler and sufficient.
+
+## Rate limits
+
+Rate limits apply per API key and are set by plan:
+
+| Plan | Requests per minute | Requests per month |
+|---|---|---|
+| Starter | 100 | 50,000 |
+| Growth | 500 | 500,000 |
+| Pro | 2,000 | Unlimited |
+| Enterprise | Unlimited | Unlimited |
+
+When you exceed the rate limit, the API returns `429 Too Many Requests` with a `Retry-After` header indicating how many seconds to wait before retrying.
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 12
+```
+
+<Tip>
+You can monitor your current usage window with the `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` response headers included on every API response.
+</Tip>
+
+## Authentication error codes
+
+| HTTP status | Internal code | Meaning | What to do |
+|---|---|---|---|
+| `401 Unauthorized` | `RPRO_ERR_401` | API key missing or malformed | Check that the `X-API-Key` header is present and correctly formatted |
+| `403 Forbidden` | `RPRO_ERR_403` | Valid key, but no permission for this endpoint | Check the plan's included modules in the Dev Portal |
+| `429 Too Many Requests` | `RPRO_ERR_429` | Rate limit exceeded | Wait the number of seconds specified in `Retry-After` |
+
+A `401` response looks like this:
+
+```json
+{
+  "error": {
+    "code": "RPRO_ERR_401",
+    "message": "API Key faltante o inválida.",
+    "field": null,
+    "request_id": "req_9f3k2m1x"
+  }
+}
+```
+
+Use the `request_id` value when contacting support — it lets the team find the exact request in server logs.

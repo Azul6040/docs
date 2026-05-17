@@ -1,0 +1,83 @@
+---
+title: "Restaurantero Pro API changelog"
+description: "Track every change to the Restaurantero Pro API: new endpoints, breaking changes, field additions, and integration updates by version."
+---
+
+This changelog documents every published change to the Restaurantero Pro API. Each entry lists the version, release date, and a description of what changed. Non-breaking changes — such as new optional fields and new endpoints — are released without a version bump. Breaking changes are published under a new major version with at least 90 days of overlap before the previous version is deprecated.
+
+<Note>
+The current stable version is **v1.0.1**, released May 2026. All base URLs use the `/api/v1/` prefix. When a breaking change is introduced, a new `/api/v2/` path will be published and announced here with a migration guide.
+</Note>
+
+---
+
+## v1.0.1 — May 2026
+
+This release adds a required field to the orders ingest endpoint and updates the integration guide and checklist to reflect it.
+
+- **`POST /api/v1/ingest/orders`** — Added `waiter_name` as a field on each order line. This field powers the Star Employees ranking in the restaurant owner's dashboard. Without it, the waiter performance module has no data to display. Send the full name of the waiter who took each order on every line:
+
+  ```json
+  {
+    "item_name": "Arrachera a las Brasas",
+    "waiter_name": "Ana García",
+    "quantity": 14,
+    "unit_price_cents": 34500,
+    "subtotal_cents": 483000,
+    "net_total_cents": 483000,
+    "category_type": "food"
+  }
+  ```
+
+  If the order does not have an assigned waiter, use the `user` field from the RC order as a fallback.
+
+- **`POST /api/v1/ingest/orders`** — Each order line now generates an independent row in the database, enabling direct queries for Top 10 products, Star Employees rankings, and sales by category in the dashboard. This is a structural improvement with no change to the request format.
+
+- **Integration checklist** — Updated from 12 to 13 points. Added verification steps for `waiter_name` (item 7) and `category_type` (item 8) to the pre-production checklist.
+
+- **RC integration guide** — Updated the `OrderTicketLine` mapping snippet to include `waiter_name` and the correct relationship chain (`ticket.order.waiter` with `ticket.order.user` as fallback). See [Mapping RC models](/guides/rc-mapping) for the updated snippet.
+
+---
+
+## v1.0.0 — May 2026
+
+Initial public release of the Restaurantero Pro API.
+
+**Ingest endpoints** — Send transactional data from your POS to Restaurantero Pro:
+
+- `POST /api/v1/ingest/cash-register` — Register Corte X and Corte Z closings. The Corte Z triggers asynchronous cube regeneration for all financial reports.
+- `POST /api/v1/ingest/sales` — Submit the sales summary for a shift or day, including food, beverage, covers, and ticket averages.
+- `POST /api/v1/ingest/payments` — Submit payment method breakdown (cash, card, transfer, delivery apps).
+- `POST /api/v1/ingest/orders` — Submit individual order lines (product mix) for menu engineering and employee ranking.
+- `POST /api/v1/ingest/discounts` — Submit discounts and courtesies applied during the shift.
+- `POST /api/v1/ingest/cancellations` — Submit cancelled items and voids.
+
+**Intelligence endpoints** — Retrieve processed financial data:
+
+- `GET /api/v1/intelligence/sales/summary` — Aggregated sales totals with period-over-period comparison.
+- `GET /api/v1/intelligence/sales/by-hour` — Hourly sales breakdown for heat maps and staffing optimization.
+- `GET /api/v1/intelligence/sales/by-employee` — Waiter performance ranking (Star Employees).
+- `GET /api/v1/intelligence/sales/reconciliation` — Shift-by-shift cash reconciliation table, exportable to PDF.
+- `GET /api/v1/intelligence/cash-flow` — Digital cash ledger with inflows, outflows, and daily balance.
+- `GET /api/v1/intelligence/pnl` — Full Profit & Loss statement with food cost, labor cost, EBITDA, and net profit vs. industry benchmarks.
+- `GET /api/v1/intelligence/food-cost` — Food and beverage cost breakdown by category.
+- `GET /api/v1/intelligence/labor-cost` — Labor cost as a percentage of sales, by department.
+- `GET /api/v1/intelligence/kpis` — All KPIs in a single response with traffic-light benchmark status.
+- `GET /api/v1/intelligence/alerts` — Prioritized list of active alerts with severity, message, and recommended action.
+- `GET /api/v1/intelligence/menu/engineering` — Menu Engineering matrix classifying each dish as Star, Puzzle, Plowhorse, or Dog.
+- `GET /api/v1/intelligence/inventory/suggestions` — AI-generated purchase suggestions based on sales velocity, current stock, and supplier lead times.
+
+**Live endpoints** — Real-time data during an active shift:
+
+- `GET /api/v1/live/sales/today` — Current shift sales with projection for the full day.
+- `GET /api/v1/live/cash/balance` — Expected cash balance at this moment in the shift.
+- `GET /api/v1/live/alerts/active` — Alerts triggered during the current shift.
+
+**Webhooks** — Six event types available at launch:
+
+- `snapshot.completed` — Financial cubes regenerated after a Corte Z.
+- `alert.triggered` — A KPI crossed its risk threshold.
+- `insight.generated` — Controllero AI generated the daily summary.
+- `cash.variance` — Cash discrepancy exceeded the configured limit.
+- `inventory.low_stock` — An ingredient fell below its minimum level.
+- `purchase.suggestion_ready` — Tiendita Inteligente generated a new shopping list.

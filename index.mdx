@@ -1,0 +1,57 @@
+---
+title: "Restaurantero Pro: Financial Intelligence for Restaurants"
+description: "Connect your POS to Restaurantero Pro to get real-time P&L, food cost percentages, KPI alerts, and menu engineering for any restaurant or bar."
+---
+
+Restaurantero Pro is the financial intelligence layer for restaurants. Your POS sends daily transaction data — sales, payments, cash register cuts — and Restaurantero Pro transforms it into actionable insights: P&L statements, food cost percentages, cash reconciliation, menu engineering matrices, and AI-powered alerts. This documentation guides POS developers through authentication, data ingestion, and consuming intelligence endpoints.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Send your first API call in under 5 minutes.
+  </Card>
+  <Card title="Authentication" icon="key" href="/authentication">
+    Get your API key and authenticate every request.
+  </Card>
+  <Card title="Integration Guide" icon="plug" href="/guides/integration-flow">
+    Step-by-step walkthrough of the full POS integration flow.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/ingest/cash-register">
+    Complete reference for all ingestion and intelligence endpoints.
+  </Card>
+</CardGroup>
+
+## How it works
+
+Restaurantero Pro sits on top of your POS. You push raw transaction data to the ingestion endpoints after each cash register cut, and then pull processed intelligence back to display in your POS dashboard or manager app.
+
+<Steps>
+  <Step title="Get your API key">
+    Log in to the Restaurantero Pro dashboard, go to **Settings → Integrations → API Keys**, and generate a key for your branch.
+  </Step>
+  <Step title="Send your first Corte Z">
+    After a day-end cash register cut, POST orders, payments, sales, and the cash-register cut to the ingestion endpoints in the correct order.
+  </Step>
+  <Step title="Consume intelligence">
+    Query the intelligence endpoints to retrieve P&L, KPIs, food cost, alerts, and menu engineering data for display in your POS or manager dashboard.
+  </Step>
+  <Step title="Set up webhooks">
+    Register a webhook URL to receive real-time notifications when snapshots complete, alerts trigger, or cash variances are detected.
+  </Step>
+</Steps>
+
+## Key capabilities
+
+<CardGroup cols={2}>
+  <Card title="P&L in Real Time" icon="chart-line" href="/api/intelligence/pnl">
+    Full income statement calculated from your POS data — no spreadsheets needed.
+  </Card>
+  <Card title="KPI Benchmarks" icon="gauge" href="/api/intelligence/kpis">
+    Food cost, labor cost, EBITDA, and more compared against restaurant industry benchmarks.
+  </Card>
+  <Card title="Menu Engineering" icon="utensils" href="/api/intelligence/menu-engineering">
+    Classify every dish as Star, Puzzle, Plowhorse, or Dog based on profitability and popularity.
+  </Card>
+  <Card title="Live Shift Data" icon="bolt" href="/api/live/sales">
+    Real-time sales, cash balance, and alerts during the active shift.
+  </Card>
+</CardGroup>

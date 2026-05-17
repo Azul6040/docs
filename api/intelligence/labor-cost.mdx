@@ -1,0 +1,96 @@
+---
+title: "GET /api/v1/intelligence/labor-cost"
+sidebarTitle: "Labor Cost"
+description: "Retrieve total labor cost as a percentage of sales, broken down by department. Requires payroll data to be entered in the dashboard."
+---
+
+The Labor Cost endpoint returns the restaurant's total payroll cost as a percentage of net sales, along with a department-level breakdown showing how much each team (kitchen, service, administration, bar) contributes to total labor. This endpoint helps you identify which departments are driving labor cost above benchmarks.
+
+<Warning>
+  This endpoint requires the restaurant owner to have entered payroll data in the Restaurantero Pro dashboard. If payroll has not been recorded for the period, cost fields will return `null`.
+</Warning>
+
+## Request
+
+```http
+GET /api/v1/intelligence/labor-cost
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+## Query parameters
+
+<ParamField query="branch_identifier" type="string" required>
+  UUID of the branch to query.
+</ParamField>
+
+<ParamField query="date_from" type="string" required>
+  Start of the period (`YYYY-MM-DD`). Omit if using `period`.
+</ParamField>
+
+<ParamField query="date_to" type="string" required>
+  End of the period (`YYYY-MM-DD`). Omit if using `period`.
+</ParamField>
+
+<ParamField query="period" type="string">
+  Period shortcut: `today`, `yesterday`, `week`, or `month`.
+</ParamField>
+
+## Response fields
+
+<ResponseField name="data.attributes.total_labor_cents" type="integer">
+  Total payroll cost for the period, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.labor_cost_pct" type="number">
+  Labor cost as a percentage of net sales.
+</ResponseField>
+
+<ResponseField name="data.attributes.labor_cost_status" type="string">
+  Benchmark status: `green` (< 30%), `yellow` (30–35%), or `red` (> 35%).
+</ResponseField>
+
+<ResponseField name="data.attributes.by_department" type="array">
+  Department-level payroll breakdown.
+
+  <Expandable title="Department object properties">
+    <ResponseField name="department" type="string">
+      Department name (e.g., `"Cocina"`, `"Servicio"`, `"Administración"`, `"Bar"`).
+    </ResponseField>
+    <ResponseField name="amount_cents" type="integer">
+      Total payroll cost for this department during the period, in centavos.
+    </ResponseField>
+    <ResponseField name="pct_of_sales" type="number">
+      This department's payroll as a percentage of total net sales.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example
+
+```http
+GET /api/v1/intelligence/labor-cost?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890&date_from=2026-05-01&date_to=2026-05-15
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+```json
+{
+  "data": {
+    "type": "labor_cost",
+    "attributes": {
+      "total_labor_cents": 2470350,
+      "labor_cost_pct": 30.0,
+      "labor_cost_status": "yellow",
+      "by_department": [
+        { "department": "Cocina",          "amount_cents": 1050000, "pct_of_sales": 12.8 },
+        { "department": "Servicio",        "amount_cents": 870000,  "pct_of_sales": 10.6 },
+        { "department": "Administración",  "amount_cents": 350000,  "pct_of_sales": 4.3  },
+        { "department": "Bar",             "amount_cents": 200350,  "pct_of_sales": 2.4  }
+      ]
+    }
+  }
+}
+```
+
+<Tip>
+  Cross-reference this endpoint with the [Sales by hour](/api/intelligence/sales-summary) data to evaluate whether labor is well-aligned with peak service hours. High kitchen labor on low-sales days is a common optimization opportunity.
+</Tip>

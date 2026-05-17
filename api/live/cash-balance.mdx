@@ -1,0 +1,77 @@
+---
+title: "GET /api/v1/live/cash/balance"
+sidebarTitle: "Cash Balance"
+description: "Get the expected cash balance in the register right now — useful for detecting cash variances during the shift before the Corte Z."
+---
+
+The Live Cash Balance endpoint returns the expected cash amount in the register at the current moment, calculated from the opening balance, all cash sales processed so far, and all cash outflows recorded during the shift. Comparing this expected balance against the actual physical count lets managers catch shortfalls or overages before the end-of-day Corte Z.
+
+<Note>
+  Only `branch_identifier` is required. There are no date parameters — this endpoint always reflects the current open shift. For historical cash flow analysis, use [GET /api/v1/intelligence/cash-flow](/api/intelligence/pnl).
+</Note>
+
+## Request
+
+```http
+GET /api/v1/live/cash/balance
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+## Query parameters
+
+<ParamField query="branch_identifier" type="string" required>
+  UUID of the branch to query.
+</ParamField>
+
+## Response fields
+
+<ResponseField name="data.attributes.as_of" type="string">
+  ISO 8601 timestamp of when the balance was calculated, in the branch's configured timezone.
+</ResponseField>
+
+<ResponseField name="data.attributes.opening_balance_cents" type="integer">
+  The starting cash amount in the register at the beginning of the shift (the opening fund), in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.cash_sales_so_far_cents" type="integer">
+  Total cash received from sales during the shift so far, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.cash_out_so_far_cents" type="integer">
+  Total cash paid out during the shift so far (e.g., petty cash, tips paid to servers), in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.expected_balance_cents" type="integer">
+  The expected cash balance right now: `opening_balance + cash_sales - cash_out`, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.status" type="string">
+  Cash balance health status based on the variance between expected and reported amounts: `green`, `yellow`, or `red`. Returns `green` when the reported amounts are consistent with expectations.
+</ResponseField>
+
+## Example
+
+```http
+GET /api/v1/live/cash/balance?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+```json
+{
+  "data": {
+    "type": "live_cash",
+    "attributes": {
+      "as_of": "2026-05-15T21:30:00-07:00",
+      "opening_balance_cents": 500000,
+      "cash_sales_so_far_cents": 78500,
+      "cash_out_so_far_cents": 12000,
+      "expected_balance_cents": 566500,
+      "status": "green"
+    }
+  }
+}
+```
+
+<Warning>
+  The `expected_balance_cents` reflects what *should* be in the register based on the data ingested so far. If the POS has not pushed all transactions to Restaurantero Pro yet, the expected balance will be lower than the actual physical cash. Ensure your POS sends transactions promptly via `POST /api/v1/ingest/sales` and `POST /api/v1/ingest/payments`.
+</Warning>

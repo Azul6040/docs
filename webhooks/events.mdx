@@ -1,0 +1,224 @@
+---
+title: "Restaurantero Pro webhook event reference"
+description: "Reference for all Restaurantero Pro webhook events: snapshot.completed, alert.triggered, cash.variance, insight.generated, and more."
+---
+
+Restaurantero Pro emits six webhook events covering the full lifecycle of a day's financial data — from the moment the nightly snapshot finishes regenerating, through KPI alerts and AI-generated insights, to inventory and purchasing signals. Each event delivers a signed JSON payload to your registered endpoint. This page documents every event, when it fires, what it is useful for, and the exact payload structure.
+
+<Note>
+Before reading the event payloads, make sure your endpoint verifies the `X-Restaurantero-Signature` header on every request. See the [webhook overview](/webhooks/overview#verify-the-hmac-sha256-signature) for the verification code.
+</Note>
+
+## Event summary
+
+| Event | When it fires |
+|---|---|
+| `snapshot.completed` | After a Corte Z is processed and all financial cubes are regenerated |
+| `alert.triggered` | When a KPI crosses its configured risk threshold |
+| `insight.generated` | When the Controllero AI generates the daily financial summary |
+| `cash.variance` | When a cash register discrepancy exceeds the configured limit |
+| `inventory.low_stock` | When an ingredient falls below its minimum recommended level |
+| `purchase.suggestion_ready` | When the Tiendita Inteligente generates a new shopping list |
+
+---
+
+## snapshot.completed
+
+**When it fires:** Restaurantero Pro emits this event after it finishes regenerating all financial cubes following a Corte Z (`zout`). Cube regeneration typically takes a few seconds after your POS sends the `POST /api/v1/ingest/cash-register` call.
+
+**Useful for:** Triggering a dashboard refresh — fetching the updated P&L, KPIs, and alerts only after the data is confirmed ready, instead of polling on a timer.
+
+```json
+{
+  "event": "snapshot.completed",
+  "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+  "timestamp": "2026-05-15T23:52:00Z",
+  "data": {
+    "snapshot_type": "daily",
+    "date": "2026-05-15",
+    "cubes_regenerated": ["sales", "pnl", "cash_ledger", "menu_engineering"]
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `data.snapshot_type` | Always `daily` for Corte Z snapshots |
+| `data.date` | The business date the snapshot covers (`YYYY-MM-DD`) |
+| `data.cubes_regenerated` | Array of cube names that were updated |
+
+<Tip>
+After receiving `snapshot.completed`, you can safely call `GET /api/v1/intelligence/pnl`, `GET /api/v1/intelligence/kpis`, and `GET /api/v1/intelligence/alerts` to display the day's results.
+</Tip>
+
+---
+
+## alert.triggered
+
+**When it fires:** A KPI crossed its configured risk threshold. This happens as part of cube regeneration after a Corte Z, or in real time during a shift if a live metric exceeds a limit.
+
+**Useful for:** Sending a push notification to the restaurant owner or manager with the specific alert details and recommended action.
+
+```json
+{
+  "event": "alert.triggered",
+  "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+  "timestamp": "2026-05-15T23:52:00Z",
+  "data": {
+    "alert_id": "alert-uuid-1",
+    "severity": "yellow",
+    "type": "food_cost_high",
+    "title": "Food Cost en zona de atención",
+    "message": "Tu Food Cost es 30.0% — está en el límite del rango recomendado (< 30%). Revisa los costos de materia prima de Carnes.",
+    "action": "Revisar compras de Carnes en el período"
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `data.alert_id` | UUID of the alert record — use to fetch details or mark as read |
+| `data.severity` | `blue` (informational), `yellow` (warning), or `red` (critical) |
+| `data.type` | Machine-readable alert type, e.g. `food_cost_high`, `cash_variance_high` |
+| `data.title` | Short human-readable title for display |
+| `data.message` | Full explanation with the actual value and benchmark |
+| `data.action` | Recommended next step for the operator |
+
+---
+
+## insight.generated
+
+**When it fires:** The Controllero AI finishes generating the daily financial narrative — a plain-language summary of the day's performance, anomalies, and recommendations.
+
+**Useful for:** Displaying the AI insight card in the POS dashboard or sending it as a daily digest message to the owner.
+
+```json
+{
+  "event": "insight.generated",
+  "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+  "timestamp": "2026-05-15T23:55:00Z",
+  "data": {
+    "insight_id": "insight-uuid-1",
+    "date": "2026-05-15",
+    "summary": "Las ventas del día fueron $5,345.50 MXN, un 8.3% por encima del mismo día de la semana pasada. El Food Cost de 30.0% entró en zona amarilla — revisa los costos de Carnes. El ticket promedio subió a $61.44, impulsado por la cena.",
+    "language": "es-MX"
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `data.insight_id` | UUID of the insight record |
+| `data.date` | Business date this insight covers |
+| `data.summary` | Full AI-generated narrative in Spanish |
+| `data.language` | Language code — always `es-MX` |
+
+---
+
+## cash.variance
+
+**When it fires:** A cash register discrepancy (sobrante or faltante) exceeds the threshold configured for the branch. This can fire at Corte Z time or during a live shift if real-time monitoring is enabled.
+
+**Useful for:** Alerting the manager immediately when a cash discrepancy is detected, before the end of day reconciliation.
+
+```json
+{
+  "event": "cash.variance",
+  "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+  "timestamp": "2026-05-15T23:52:00Z",
+  "data": {
+    "date": "2026-05-15",
+    "shift": "dinner",
+    "folio": "Z-00045",
+    "cashier": "Ana García",
+    "variance_cents": -85000,
+    "variance_pct": 1.6,
+    "variance_status": "yellow",
+    "expected_balance_cents": 5345000,
+    "actual_balance_cents": 5260000
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `data.variance_cents` | Discrepancy in cents — negative means faltante (shortage), positive means sobrante (overage) |
+| `data.variance_pct` | Discrepancy as a percentage of expected balance |
+| `data.variance_status` | `green` (< 1%), `yellow` (1–3%), or `red` (> 3%) |
+| `data.cashier` | Name of the cashier responsible for the register |
+
+<Warning>
+A negative `variance_cents` indicates a cash shortage. A positive value indicates a cash overage. Both should be investigated — overages can indicate incorrect deposits as much as shortages indicate missing cash.
+</Warning>
+
+---
+
+## inventory.low_stock
+
+**When it fires:** An ingredient or supply item tracked in the Restaurantero Pro inventory module falls below its configured minimum stock level.
+
+**Useful for:** Notifying the purchasing manager or kitchen supervisor to reorder before the restaurant runs out of a key ingredient.
+
+```json
+{
+  "event": "inventory.low_stock",
+  "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+  "timestamp": "2026-05-15T06:00:00Z",
+  "data": {
+    "item_name": "Arrachera USDA Choice",
+    "unit": "kg",
+    "current_stock": 4.5,
+    "minimum_stock": 10.0,
+    "days_of_stock_remaining": 0.8,
+    "supplier_name": "Carnes Premium Hermosillo"
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `data.item_name` | Name of the ingredient or product |
+| `data.unit` | Unit of measurement (`kg`, `lt`, `pz`, etc.) |
+| `data.current_stock` | Current quantity on hand |
+| `data.minimum_stock` | Configured minimum threshold that triggered this event |
+| `data.days_of_stock_remaining` | Estimated days until stock runs out, based on recent sales velocity |
+| `data.supplier_name` | The supplier associated with this item, if configured |
+
+<Note>
+This event requires the operator to have inventory configured in the Restaurantero Pro dashboard, including minimum stock levels and supplier assignments.
+</Note>
+
+---
+
+## purchase.suggestion_ready
+
+**When it fires:** The Tiendita Inteligente module finishes generating a new purchase suggestion list, based on recent sales velocity, current stock levels, and supplier lead times.
+
+**Useful for:** Notifying the person responsible for purchasing that a new recommended shopping list is ready to review in the dashboard.
+
+```json
+{
+  "event": "purchase.suggestion_ready",
+  "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+  "timestamp": "2026-05-15T06:00:00Z",
+  "data": {
+    "generated_at": "2026-05-15T06:00:00Z",
+    "days_ahead": 3,
+    "item_count": 12,
+    "total_suggested_cents": 645000,
+    "suppliers": ["Carnes Premium Hermosillo", "Distribuidora El Sol"]
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `data.generated_at` | Timestamp when the suggestion list was computed |
+| `data.days_ahead` | Number of days the list covers |
+| `data.item_count` | Total number of items in the suggested order |
+| `data.total_suggested_cents` | Estimated total purchase cost in cents |
+| `data.suppliers` | Array of supplier names included in the suggestion |
+
+<Tip>
+After receiving this event, direct your user to `GET /api/v1/intelligence/inventory/suggestions` to retrieve the full itemized list grouped by supplier.
+</Tip>

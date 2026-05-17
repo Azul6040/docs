@@ -1,0 +1,264 @@
+---
+title: "Mapping Restaurant Controller models to Restaurantero Pro"
+description: "Map every Restaurant Controller model — CashRegisterOpening, OrderTicketLine, Payment, Discount, Cancellation — to the correct Restaurantero Pro endpoint."
+---
+
+Restaurant Controller organizes its data into five core models: `CashRegisterOpening`, `OrderTicketLine`, `Payment`, `Discount`, and `Cancellation`. Each maps to a dedicated Restaurantero Pro ingestion endpoint. This page shows you the exact PHP mapping code for each model, explains the `unit_price`/`quantity` mutator behavior you need to account for, and covers the `waiter_name` field that drives the Star Employees ranking in the owner dashboard.
+
+## Full Dining vs Express
+
+Both RC variants share the same model structure and the same integration point. The only difference is that Full Dining includes tables and reservations — the ingestion models (`CashRegisterOpening`, `OrderTicketLine`, `Payment`, `Discount`, `Cancellation`) are identical across both.
+
+| Feature | Full Dining (`restaurant_pos`) | Express (`express_pos`) |
+|---|---|---|
+| Tables and zones | Yes | No |
+| `CashRegisterOpening` | Yes | Yes |
+| `OrderTicketLine` | Yes | Yes |
+| `Payment` | Yes | Yes |
+| `Discount` | Yes | Yes |
+| `Cancellation` | Yes | Yes |
+| Integration point | `CashRegisterOpeningController.php` | `CashRegisterOpeningController.php` |
+
+The dispatch code lives in the same controller file for both variants. The `pos_variant` field in your request `meta` block is where you tell Restaurantero Pro which flavor you are running.
+
+---
+
+## Model mapping table
+
+| RC model | Restaurantero Pro endpoint | What it contains |
+|---|---|---|
+| `CashRegisterOpening` (type `zout`) | `POST /api/v1/ingest/cash-register` | The day close record with cash, card, tips, variance summaries |
+| `CashRegisterOpeningSummary[]` | Included in cash-register body | Each financial summary line (cash sales, card sales, tips, etc.) |
+| `Order → OrderTicket → OrderTicketLine[]` | `POST /api/v1/ingest/orders` | Every product sold: name, qty, price, waiter, category |
+| `Payment[]` grouped by `PaymentType` | `POST /api/v1/ingest/payments` | How customers paid, by payment method |
+| `Discount[]` | `POST /api/v1/ingest/discounts` | All discounts and courtesies applied during the shift |
+| `Cancellation[]` | `POST /api/v1/ingest/cancellations` | All voided or cancelled order lines |
+
+---
+
+## PHP mapping code
+
+### CashRegisterOpening → `/api/v1/ingest/cash-register`
+
+```php
+// After a successful Corte Z in RC:
+$closing = $cashRegisterOpening; // the CashRegisterOpening model
+
+$body = [
+    'data' => [
+        'type' => 'cash-register',
+        'attributes' => [
+            'branch_identifier' => config('restaurantero.branch_identifier'),
+            'closing_type'      => 'zout', // or 'xout' for Corte X
+            'start_at'          => $closing->start_at->toIso8601String(),
+            'end_at'            => $closing->end_at->toIso8601String(),
+            'status'            => 'completed',
+            'summaries'         => $closing->summaries->map(fn($s) => [
+                'type'         => $this->mapSummaryType($s->type), // see table below
+                'name'         => $s->name,
+                'amount_cents' => (int) ($s->amount * 100),        // RC stores in centavos — adjust if already in centavos
+            ])->toArray(),
+        ],
+        'meta' => [
+            'pos_name'      => 'restaurant_controller',
+            'pos_version'   => config('app.version'),
+            'pos_variant'   => 'full_dining', // or 'express'
+            'sent_at'       => now()->toIso8601String(),
+            'cashier_name'  => $closing->user?->name,
+        ],
+    ],
+];
+```
+
+### Summary type mapping
+
+The `type` values in `CashRegisterOpeningSummary` use RC's internal naming. Map them to the Restaurantero Pro canonical types before sending:
+
+| RC type | Restaurantero Pro type |
+|---|---|
+| Ventas Efectivo / cash | `cash_sales` |
+| Ventas Tarjeta / card | `card_sales` |
+| Ventas Tarjeta Crédito | `card_credit_sales` |
+| Ventas Tarjeta Débito | `card_debit_sales` |
+| Transferencia | `transfer_sales` |
+| Propinas Cobradas | `tips_received` |
+| Propinas Pagadas Mesero (`tipPaidToWaiter`) | `tips_paid_to_waiter` |
+| Retención / Moche (`withholdingAmount`) | `withholding` |
+| Depósitos (`deposits`) | `deposits` |
+| Sobrante / Faltante | `cash_variance` |
+
+---
+
+### OrderTicketLine → `/api/v1/ingest/orders`
+
+<Warning>
+**Mutator behavior for `unit_price` and `quantity`:** RC applies mutators to these two attributes that divide the stored database value by 100 before returning it. For example, if the database contains `1500000`, the mutator returns `150.00` (pesos). To send the correct centavo value to Restaurantero Pro, multiply by 100 when building the payload.
+</Warning>
+
+<Note>
+**`waiter_name` is required for Star Employees.** Without this field, the waiter ranking module in the owner dashboard will have no data. Use the `waiter` relationship on the order as the primary source, and fall back to `user` if `waiter` is null.
+</Note>
+
+```php
+// Collect all lines from closed orders for the day
+$lines = OrderTicketLine::query()
+    ->whereHas('ticket.order', fn($q) => $q->whereIn('status', ['closed', 'to_pay']))
+    ->whereDate('created_at', today())
+    ->with(['ticket.order.user', 'ticket.order.waiter', 'item.category'])
+    ->get()
+    ->map(fn($line) => [
+        'item_identifier'  => $line->item?->identifier,
+        'item_sku'         => $line->identification ?? $line->item?->sku,
+        'item_name'        => $line->description,
+        'category'         => $line->item?->category?->name,
+        'category_type'    => $this->mapCategoryType($line->item?->category),
+        // ⭐ waiter_name — required for Star Employees in the owner dashboard
+        'waiter_name'      => $line->ticket?->order?->waiter?->name
+                           ?? $line->ticket?->order?->user?->name
+                           ?? null,
+        'quantity'         => (int) ($line->quantity * 100), // RC uses centavos for qty
+        'unit_price_cents' => $line->unit_price,             // RC already returns pesos — multiply by 100
+        'subtotal_cents'   => (int) ($line->subtotal * 100),
+        'discount_cents'   => (int) ($line->discount * 100),
+        'net_total_cents'  => (int) ($line->netSubtotal * 100),
+    ])->toArray();
+```
+
+**Valid `category_type` values:**
+
+| Value | Description | Powers |
+|---|---|---|
+| `food` | Food items | Food Cost %, Top 10, Sales by category |
+| `beverage` | Non-alcoholic drinks | Beverage Cost %, Top 10 |
+| `bar` | Alcoholic drinks | Bar Cost %, Top 10 |
+| `other` | Unclassified | Top 10 only |
+
+---
+
+### Payment → `/api/v1/ingest/payments`
+
+```php
+// Group payments by type
+$payments = Payment::query()
+    ->whereDate('created_at', today())
+    ->whereIn('status', ['active', 'paid'])
+    ->with('type')
+    ->get()
+    ->groupBy('type.name')
+    ->map(fn($group, $typeName) => [
+        'payment_type'      => $this->mapPaymentType($typeName),
+        'payment_type_name' => $typeName,
+        'amount_cents'      => (int) ($group->sum('amount') * 100),
+        'tips_cents'        => 0, // if RC tracks tips per payment, add here
+        'change_cents'      => (int) ($group->sum('change') * 100),
+        'transaction_count' => $group->count(),
+    ])->values()->toArray();
+```
+
+**Standard `payment_type` values:**
+
+| payment_type | Description |
+|---|---|
+| `cash` | Cash |
+| `card_credit` | Credit card |
+| `card_debit` | Debit card |
+| `card` | Card (no credit/debit distinction) |
+| `transfer` | Bank transfer / SPEI |
+| `rappi` | Rappi |
+| `uber_eats` | Uber Eats |
+| `didi_food` | DiDi Food |
+| `voucher` | Grocery vouchers |
+| `other` | Other |
+
+---
+
+### Discount → `/api/v1/ingest/discounts`
+
+```php
+$discounts = Discount::query()
+    ->whereDate('created_at', today())
+    ->whereIn('status', ['active'])
+    ->with(['user', 'category'])
+    ->get()
+    ->map(fn($d) => [
+        'discount_identifier' => $d->identifier,
+        'type'                => $d->type,
+        'factor_type'         => $d->factor_type,
+        'name'                => $d->name,
+        'rate'                => $d->rate_or_fee,
+        'amount_cents'        => (int) ($d->rate_or_fee * 100),
+        'applied_to'          => class_basename($d->discountable_type),
+        'applied_by'          => $d->user?->name,
+        'authorized_by'       => $d->user?->name,
+        'reason'              => $d->description,
+    ])->toArray();
+```
+
+**Discount types:**
+
+| type / factor_type | Description |
+|---|---|
+| `percentage` | Percentage off the subtotal |
+| `fixed` | Fixed amount in centavos |
+| `courtesy` | Full courtesy — 100% of the amount |
+
+---
+
+### Cancellation → `/api/v1/ingest/cancellations`
+
+```php
+$cancellations = Cancellation::query()
+    ->whereDate('created_at', today())
+    ->with(['cancelledBy', 'authorizedBy', 'cancellationable'])
+    ->get()
+    ->map(fn($c) => [
+        'cancellation_identifier' => $c->identifier,
+        'item_name'               => $c->cancellationable?->description ?? 'Sin nombre',
+        'item_sku'                => $c->cancellationable?->identification,
+        'quantity'                => 1,
+        'amount_cents'            => (int) (($c->cancellationable?->subtotal ?? 0) * 100),
+        'reason'                  => $c->reason,
+        'cancelled_by'            => $c->cancelledBy?->name,
+        'authorized_by'           => $c->authorizedBy?->name,
+        'cancelled_at'            => $c->created_at->toIso8601String(),
+    ])->toArray();
+```
+
+<Note>Cancellations are monitored automatically. If the daily cancellation rate exceeds the configured threshold, Restaurantero Pro creates a `cancellations_high` alert visible in the owner dashboard.</Note>
+
+---
+
+## Key field notes
+
+<AccordionGroup>
+  <Accordion title="waiter_name and Star Employees">
+    The `waiter_name` field on each `OrderTicketLine` is what drives the Star Employees ranking in the owner dashboard. Restaurantero Pro aggregates sales, covers, average ticket, and tip percentage per waiter name string. If you omit this field — or send `null` — the entire Star Employees module will be empty for that day.
+
+    Always send the full name of the waiter who took the order. Use the `waiter` relationship as the primary source and fall back to the `user` relationship if `waiter` is null.
+  </Accordion>
+
+  <Accordion title="unit_price and quantity mutators">
+    The `unit_price` and `quantity` attributes on `OrderTicketLine` in RC use Eloquent mutators that divide the raw database value by 100 before returning it. This means if the database stores `3450000`, `$line->unit_price` returns `34500.00` (pesos, not centavos).
+
+    To send correct centavo values to Restaurantero Pro, multiply by 100:
+
+    ```php
+    'unit_price_cents' => (int) ($line->unit_price * 100),
+    'quantity'         => (int) ($line->quantity * 100),
+    ```
+
+    All other monetary fields (`subtotal`, `discount`, `netSubtotal`) follow the same pattern.
+  </Accordion>
+
+  <Accordion title="Money format — always integers in centavos">
+    Every `*_cents` field in Restaurantero Pro must be a plain integer. Never send a float or a string. The API returns `422 RPRO_ERR_422_CENTS` if it receives a decimal in a centavo field.
+
+    ```php
+    // Correct
+    'amount_cents' => (int) ($amount * 100),  // e.g. 15000
+
+    // Wrong — will fail with 422
+    'amount_cents' => 150.00,
+    ```
+  </Accordion>
+</AccordionGroup>

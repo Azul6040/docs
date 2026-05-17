@@ -1,0 +1,176 @@
+---
+title: "GET /api/v1/intelligence/menu/engineering"
+sidebarTitle: "Menu Engineering"
+description: "Classify every dish as Star, Puzzle, Plowhorse, or Dog based on contribution margin and popularity. Requires order line data to be ingested."
+---
+
+The Menu Engineering endpoint applies the classic Boston Matrix to your menu: every dish is classified into one of four quadrants based on how profitable it is (contribution margin) and how often it is ordered (popularity). Use this data to make evidence-based decisions about which items to promote, reprice, remove, or redesign.
+
+<Note>
+  This endpoint requires order line data. Your POS must send `POST /api/v1/ingest/orders` with individual item lines for each Corte Z. Without that data, the classification cannot be computed.
+</Note>
+
+## Request
+
+```http
+GET /api/v1/intelligence/menu/engineering
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+## Query parameters
+
+<ParamField query="branch_identifier" type="string" required>
+  UUID of the branch to query.
+</ParamField>
+
+<ParamField query="date_from" type="string" required>
+  Start of the period (`YYYY-MM-DD`). Omit if using `period`.
+</ParamField>
+
+<ParamField query="date_to" type="string" required>
+  End of the period (`YYYY-MM-DD`). Omit if using `period`.
+</ParamField>
+
+<ParamField query="period" type="string">
+  Period shortcut: `today`, `yesterday`, `week`, or `month`.
+</ParamField>
+
+## Quadrant classification
+
+Items are assigned to quadrants by comparing their contribution margin and popularity against the average for all items in the same period.
+
+| Quadrant | English label | Profitability | Popularity | Recommended action |
+|---|---|---|---|---|
+| `star` | Star | Above average | Above average | Protect — do not change price or recipe |
+| `puzzle` | Puzzle | Above average | Below average | Promote — untapped potential |
+| `plowhorse` | Plowhorse | Below average | Above average | Reduce cost or keep for volume |
+| `dog` | Dog | Below average | Below average | Remove or redesign |
+
+## Response fields
+
+<ResponseField name="data.attributes.summary" type="object">
+  Count of items in each quadrant.
+
+  <Expandable title="properties">
+    <ResponseField name="stars_count" type="integer">Number of Star items.</ResponseField>
+    <ResponseField name="puzzles_count" type="integer">Number of Puzzle items.</ResponseField>
+    <ResponseField name="plowhorses_count" type="integer">Number of Plowhorse items.</ResponseField>
+    <ResponseField name="dogs_count" type="integer">Number of Dog items.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="data.attributes.items" type="array">
+  Full item list with quadrant classification and performance data.
+
+  <Expandable title="Item object properties">
+    <ResponseField name="item_sku" type="string">
+      Item SKU as sent in `POST /api/v1/ingest/orders`.
+    </ResponseField>
+    <ResponseField name="item_name" type="string">
+      Item display name.
+    </ResponseField>
+    <ResponseField name="category" type="string">
+      Item category name.
+    </ResponseField>
+    <ResponseField name="quantity_sold" type="integer">
+      Total units sold during the period.
+    </ResponseField>
+    <ResponseField name="popularity_pct" type="number">
+      Percentage of total covers that ordered this item.
+    </ResponseField>
+    <ResponseField name="unit_price_cents" type="integer">
+      Sale price per unit, in centavos.
+    </ResponseField>
+    <ResponseField name="unit_cost_cents" type="integer">
+      Cost per unit (from the recipe/cost data in the dashboard), in centavos.
+    </ResponseField>
+    <ResponseField name="contribution_cents" type="integer">
+      Contribution margin per unit (`unit_price - unit_cost`), in centavos.
+    </ResponseField>
+    <ResponseField name="total_contribution_cents" type="integer">
+      Total contribution for the period (`contribution × quantity_sold`), in centavos.
+    </ResponseField>
+    <ResponseField name="quadrant" type="string">
+      Machine-readable quadrant: `star`, `puzzle`, `plowhorse`, or `dog`.
+    </ResponseField>
+    <ResponseField name="quadrant_label" type="string">
+      Localized quadrant label (e.g., `"Estrella"`, `"Puzzle"`, `"Caballo"`, `"Perro"`).
+    </ResponseField>
+    <ResponseField name="action" type="string">
+      Recommended action for this item based on its quadrant.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="data.attributes.scatter_data" type="object">
+  Pre-computed scatter plot data for visualization. `x_axis` is `popularity_pct`, `y_axis` is `contribution_cents`. Includes the average values (`x_avg`, `y_avg`) to draw quadrant dividers.
+</ResponseField>
+
+## Example
+
+```http
+GET /api/v1/intelligence/menu/engineering?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890&date_from=2026-05-01&date_to=2026-05-15
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+```json
+{
+  "data": {
+    "type": "menu_engineering",
+    "attributes": {
+      "summary": {
+        "stars_count": 8,
+        "puzzles_count": 4,
+        "plowhorses_count": 6,
+        "dogs_count": 3
+      },
+      "items": [
+        {
+          "item_sku": "ARRACHERA-01",
+          "item_name": "Arrachera a las Brasas",
+          "category": "Cortes",
+          "quantity_sold": 94,
+          "popularity_pct": 8.2,
+          "unit_price_cents": 34500,
+          "unit_cost_cents": 10350,
+          "contribution_cents": 24150,
+          "total_contribution_cents": 2270100,
+          "quadrant": "star",
+          "quadrant_label": "Estrella",
+          "action": "Proteger — no cambiar precio ni receta"
+        },
+        {
+          "item_sku": "FILETE-02",
+          "item_name": "Filete al Gusto",
+          "category": "Cortes",
+          "quantity_sold": 12,
+          "popularity_pct": 1.1,
+          "unit_price_cents": 38500,
+          "unit_cost_cents": 15400,
+          "contribution_cents": 23100,
+          "total_contribution_cents": 277200,
+          "quadrant": "puzzle",
+          "quadrant_label": "Puzzle",
+          "action": "Promover — potencial desaprovechado"
+        }
+      ],
+      "scatter_data": {
+        "x_axis": "popularity_pct",
+        "y_axis": "contribution_cents",
+        "x_avg": 4.7,
+        "y_avg": 18500,
+        "points": []
+      }
+    }
+  }
+}
+```
+
+## Recommended actions by quadrant
+
+| Quadrant | Actions to consider |
+|---|---|
+| **Star** | Feature prominently in the menu. Protect price and recipe. Train all staff to recommend it. |
+| **Puzzle** | Move to a more prominent menu position. Run a promotion or have staff actively recommend it. Consider bundling with a popular item. |
+| **Plowhorse** | Reduce portion cost without affecting perceived value. Review the recipe for ingredient substitutions. Consider a price increase. |
+| **Dog** | Remove from the menu, or redesign the recipe to improve margin. If it has loyal customers, consider keeping a reduced version. |

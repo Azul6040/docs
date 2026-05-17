@@ -1,0 +1,83 @@
+---
+title: "Restaurantero Pro: the financial layer for your POS"
+description: "Restaurantero Pro connects to any POS and turns raw transaction data into P&L statements, KPI benchmarks, and AI-powered restaurant insights."
+---
+
+Restaurantero Pro is a financial intelligence platform built for restaurants and bars. It is not a POS — it is the analytics layer that sits on top of any POS. Your system sends raw transaction data; Restaurantero Pro processes it and returns actionable intelligence that restaurant owners can use to run their business.
+
+## What Restaurantero Pro does
+
+When your POS pushes a day's worth of data to Restaurantero Pro, the platform produces:
+
+- A real-time P&L statement with food cost, beverage cost, and labor cost percentages
+- KPI benchmarks calibrated to the Mexican restaurant industry, each with a green/yellow/red traffic-light status
+- A cash ledger (Estado de Cuenta de Efectivo) that replaces the Excel spreadsheet most operators still use
+- Per-shift cash reconciliation with variance detection
+- A Menu Engineering matrix that classifies every item as Star, Puzzle, Plowhorse, or Dog
+- Automatic alerts when any KPI crosses its risk threshold
+- Smart purchasing suggestions (Tiendita Inteligente) based on real sales velocity and current stock
+- A Spanish-language AI financial agent ("Controllero Financiero") that answers questions about the business
+
+## Who this documentation is for
+
+This API documentation is for POS developers who want to connect their platform to Restaurantero Pro. If you are building on Restaurant Controller, see the [Integration flow guide](/guides/integration-flow) for an exact model-to-endpoint mapping specific to that POS.
+
+## Integration philosophy
+
+The integration follows a simple push-then-pull pattern:
+
+```
+POS                          Restaurantero Pro
+───────────────────────      ──────────────────────────────────────
+Raw data           →         Processed intelligence
+Corte Z            →         P&L for the day, food cost, alerts
+Order lines        →         Menu matrix, product mix
+Payments           →         Reconciliation, cash flow
+Cancellations      →         Void alerts, loss analysis
+```
+
+Ingestion is **unidirectional**: your POS pushes data to the `/api/v1/ingest/*` endpoints. Intelligence consumption is **bidirectional**: you query the `/api/v1/intelligence/*` endpoints to retrieve processed results and display them inside your POS or your own app.
+
+The Corte Z (`POST /api/v1/ingest/cash-register` with `closing_type: "zout"`) is the main trigger. When Restaurantero Pro receives it, it regenerates all analytical cubes for the day, calculates alerts, and fires the `snapshot.completed` webhook so your system knows the data is ready.
+
+## Environments
+
+| Environment | Base URL | Purpose |
+|---|---|---|
+| **Production** | `https://api.restauranteropro.com/api/v1` | Real customer data |
+| **Sandbox** | `https://sandbox.restauranteropro.com/api/v1` | Development and testing — no charges, no real effects |
+
+<Tip>
+Always develop and test in Sandbox before activating a production API key for a customer. Sandbox accepts the same payloads as production and surfaces results in the Dev Portal logs.
+</Tip>
+
+Production API keys have the prefix `rpro_live_`. Sandbox keys have the prefix `rpro_test_`. The key format itself tells you which environment you are targeting.
+
+## Versioning policy
+
+The API uses a version prefix in the URL (`/v1/`). When a breaking change is required, a new version (`/v2/`) will be published with a minimum **90-day coexistence period** before the previous version is deprecated. Non-breaking changes — new optional fields, new endpoints — are added without a version bump.
+
+## Support
+
+| Channel | Details |
+|---|---|
+| Email | dev@restauranteropro.com |
+| Slack | `#partners-api` channel (access granted when you register as a partner) |
+| Status and uptime | https://status.restauranteropro.com |
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/authentication">
+    Obtain your API key and learn how to include it in every request.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Send your first Corte Z and query your first KPI in under 10 minutes.
+  </Card>
+  <Card title="Integration flow" icon="arrows-turn-right" href="/guides/integration-flow">
+    Step-by-step integration guide for Restaurant Controller POS.
+  </Card>
+  <Card title="Ingest: cash register" icon="cash-register" href="/api/ingest/cash-register">
+    Reference for the Corte Z endpoint that triggers daily processing.
+  </Card>
+</CardGroup>

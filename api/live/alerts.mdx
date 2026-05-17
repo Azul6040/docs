@@ -1,0 +1,74 @@
+---
+title: "GET /api/v1/live/alerts/active"
+sidebarTitle: "Live Alerts"
+description: "Get active shift alerts — discount anomalies, void patterns, and cash variance warnings updated in real time as transactions are processed."
+---
+
+The Live Alerts endpoint returns alerts generated during the current active shift. Unlike the [Intelligence alerts endpoint](/api/intelligence/alerts) — which covers closed periods — these alerts fire in real time as transactions are ingested, making them suitable for push notifications to the manager, in-app badges, or alert banners that require immediate attention.
+
+## Request
+
+```http
+GET /api/v1/live/alerts/active
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+## Query parameters
+
+<ParamField query="branch_identifier" type="string" required>
+  UUID of the branch to query. Only the current active shift is returned — no date parameters are needed.
+</ParamField>
+
+## Response fields
+
+<ResponseField name="data.attributes.alerts" type="array">
+  List of active alerts for the current shift, ordered by severity.
+
+  <Expandable title="Alert object properties">
+    <ResponseField name="severity" type="string">
+      Alert severity: `red` (critical), `yellow` (caution), or `blue` (informational / positive).
+    </ResponseField>
+    <ResponseField name="type" type="string">
+      Machine-readable alert type (e.g., `discounts_high`, `void_alert`, `cash_variance_high`). See the [alert types reference](/api/intelligence/alerts#alert-types) for the full list.
+    </ResponseField>
+    <ResponseField name="message" type="string">
+      Human-readable alert message with specific values and context. Designed to be displayed as-is to the manager.
+    </ResponseField>
+    <ResponseField name="triggered_at" type="string">
+      ISO 8601 timestamp of when the alert was triggered, in the branch's configured timezone.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example
+
+```http
+GET /api/v1/live/alerts/active?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+```json
+{
+  "data": {
+    "type": "live_alerts",
+    "attributes": {
+      "alerts": [
+        {
+          "severity": "yellow",
+          "type": "discounts_high",
+          "message": "Se han aplicado 4 cortesías hoy — 2 más que el promedio diario",
+          "triggered_at": "2026-05-15T20:45:00-07:00"
+        }
+      ]
+    }
+  }
+}
+```
+
+<Tip>
+  Subscribe to the `alert.triggered` webhook event to receive push notifications the moment an alert fires, instead of polling this endpoint. This is especially useful for high-severity alerts that require an immediate manager response.
+</Tip>
+
+<Note>
+  If no alerts have been triggered during the current shift, the `alerts` array will be empty (`[]`). An empty array is a normal and expected response.
+</Note>

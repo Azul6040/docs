@@ -1,0 +1,164 @@
+---
+title: "Restaurantero Pro data model and key concepts"
+description: "Understand branches, groups, brands, shifts, closing types, and how data flows from your POS into Restaurantero Pro's intelligence engine."
+---
+
+Restaurantero Pro organizes restaurant data around a three-level hierarchy and a set of classification fields that your POS must supply correctly. Getting these right at the start of your integration ensures that every intelligence output — from the P&L to the menu matrix — is accurate and complete.
+
+## The Group → Brand → Branch hierarchy
+
+Every piece of data in Restaurantero Pro belongs to a branch. Branches are organized into brands, and brands into groups:
+
+```
+Group   → The restaurant group or holding company that owns the subscription
+ └── Brand  → A restaurant concept or chain (e.g., "Pitic", "Mariscos El Faro")
+       └── Branch → A single physical location with its own address, RFC, and timezone
+```
+
+A restaurant group with five locations has one Group, one or more Brands (depending on whether they operate multiple concepts), and five Branches. Each Branch has its own API key, its own data silo, and its own intelligence outputs.
+
+<Info>
+Group, Brand, and Branch records are created during onboarding — either by the Restaurantero Pro team or through the back-office panel. As a POS developer, the only identifier you need is the `branch_identifier` UUID for the specific location you are connecting.
+</Info>
+
+## branch_identifier
+
+The `branch_identifier` is a UUID v4 that uniquely identifies a branch within Restaurantero Pro. You receive it during onboarding and must include it in every ingestion request:
+
+```json
+"branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890"
+```
+
+Store it in your environment configuration alongside the API key:
+
+```bash
+RESTAURANTERO_BRANCH_IDENTIFIER=b1c2d3e4-f5a6-7890-abcd-ef1234567890
+```
+
+If you send data with an unknown `branch_identifier`, the API returns `404 RPRO_ERR_404`.
+
+## Closing types: xout vs zout
+
+Restaurantero Pro recognizes two types of cash register cuts:
+
+| `closing_type` | Description | Effect |
+|---|---|---|
+| `xout` | Corte X — partial shift close | Informational only. Stored but does not trigger cube regeneration or alerts. |
+| `zout` | Corte Z — end-of-day close | **Main trigger.** When received, Restaurantero Pro regenerates all analytical cubes for the day, recalculates KPIs, and fires the `snapshot.completed` webhook. |
+
+When you send a Corte X, only send the `POST /api/v1/ingest/cash-register` endpoint. Do not send orders, payments, discounts, cancellations, or sales alongside a Corte X — those payloads are reserved for the Corte Z flow.
+
+When you send a Corte Z, send all six endpoints in the correct order:
+
+```
+1. POST /api/v1/ingest/orders
+2. POST /api/v1/ingest/discounts
+3. POST /api/v1/ingest/cancellations
+4. POST /api/v1/ingest/payments
+5. POST /api/v1/ingest/sales
+6. POST /api/v1/ingest/cash-register   ← sends last; triggers processing
+```
+
+## Shifts
+
+Sales and orders are tagged with the shift during which they occurred. Restaurantero Pro uses shift values to break down analytics by service period:
+
+| Value | Description |
+|---|---|
+| `breakfast` | Breakfast service |
+| `lunch` | Lunch service |
+| `dinner` | Dinner service |
+| `bar` | Bar or late-night service |
+| `all_day` | Use when your POS does not separate by shift |
+
+If your restaurant operates a single combined shift, use `all_day` for every record.
+
+## category_type
+
+The `category_type` field on each order line classifies what was sold. This classification powers the Food Cost %, Beverage Cost %, and Bar Cost % calculations in the P&L, as well as the product mix breakdown in the dashboard:
+
+| Value | Description | Feeds |
+|---|---|---|
+| `food` | Food items | Food Cost %, Top 10 products, category breakdown |
+| `beverage` | Non-alcoholic beverages | Beverage Cost %, Top 10 products |
+| `bar` | Alcoholic beverages | Bar Cost %, Top 10 products |
+| `other` | Items that don't fit the above | Top 10 products |
+
+<Warning>
+Every order line must include a `category_type`. If this field is missing or incorrect, the cost percentages in the P&L will be wrong, and the owner will see inaccurate financial data in their dashboard. Map your POS categories to these four values during integration.
+</Warning>
+
+## What happens when a Corte Z is received
+
+When Restaurantero Pro receives a `POST /api/v1/ingest/cash-register` with `closing_type: "zout"`, it responds `202 Accepted` and starts an asynchronous processing job. This job:
+
+1. **Aggregates** all data received for that branch on that date — orders, payments, discounts, cancellations, and sales summaries.
+2. **Regenerates analytical cubes** — precomputed data structures that power the intelligence endpoints. Cubes include daily sales, P&L, cash ledger, menu engineering data, and more.
+3. **Calculates KPI statuses** — each KPI is evaluated against its benchmark thresholds and assigned a `green`, `yellow`, or `red` status.
+4. **Creates alerts** — any KPI that crosses its risk threshold generates an alert record that surfaces in `GET /api/v1/intelligence/alerts`.
+5. **Fires the `snapshot.completed` webhook** — notifies your system that the intelligence data for the day is ready to query.
+
+Cube regeneration typically takes about 5 seconds. Use the webhook instead of polling the intelligence endpoints to know when data is available.
+
+## Benchmark thresholds and traffic-light statuses
+
+Every KPI returned by Restaurantero Pro includes a `status` field with one of three values: `green`, `yellow`, or `red`. These statuses are calculated against industry benchmarks calibrated to the Mexican restaurant sector:
+
+| KPI | Green | Yellow | Red |
+|---|---|---|---|
+| Food Cost % | < 30% | 30–38% | > 38% |
+| Beverage Cost % | < 20% | 20–28% | > 28% |
+| Bar Cost % | < 25% | 25–30% | > 30% |
+| Labor Cost % | < 30% | 30–35% | > 35% |
+| Prime Cost % | < 60% | 60–65% | > 65% |
+| EBITDA % | > 20% | 10–20% | < 10% |
+| Net Profit % | > 15% | 5–15% | < 5% |
+| Cash Variance | < 1% | 1–3% | > 3% |
+| Inventory DSI | < 7 days | 7–14 days | > 14 days |
+
+These thresholds appear in the `meta.benchmarks` block of intelligence responses:
+
+```json
+"meta": {
+  "benchmarks": {
+    "food_cost": { "green": "< 30%", "yellow": "30-38%", "red": "> 38%" },
+    "labor_cost": { "green": "< 30%", "yellow": "30-35%", "red": "> 35%" },
+    "prime_cost": { "green": "< 60%", "yellow": "60-65%", "red": "> 65%" },
+    "ebitda":     { "green": "> 20%", "yellow": "10-20%", "red": "< 10%" }
+  }
+}
+```
+
+<Tip>
+When displaying KPIs in your POS dashboard, render the traffic-light status as a color indicator next to each metric. Restaurant owners without an accounting background respond well to the green/yellow/red system — it tells them at a glance which areas of their business need attention.
+</Tip>
+
+## Menu Engineering quadrants
+
+When you send order lines via `POST /api/v1/ingest/orders`, Restaurantero Pro uses them to populate the Menu Engineering matrix. Each item is classified into one of four quadrants based on its profitability (contribution margin) relative to the menu average and its popularity (quantity sold) relative to the menu average:
+
+<AccordionGroup>
+  <Accordion title="Star (Estrella) — high profitability, high popularity">
+    These are your best items. They generate strong margins and sell in high volume. The recommended action is to protect them — do not change the price, the recipe, or the presentation.
+  </Accordion>
+  <Accordion title="Puzzle (Puzzle) — high profitability, low popularity">
+    These items have strong margins but are not selling enough. They represent untapped potential. The recommended action is to promote them — reposition on the menu, train staff to recommend them, or add a visual highlight.
+  </Accordion>
+  <Accordion title="Plowhorse (Caballo de batalla) — low profitability, high popularity">
+    These items sell in high volume but generate thin margins. They are often customer favorites that are hard to remove. The recommended action is to reduce their cost (renegotiate with suppliers, adjust portion size) or maintain them for volume.
+  </Accordion>
+  <Accordion title="Dog (Perro) — low profitability, low popularity">
+    These items contribute little to revenue or margin. The recommended action is to eliminate them from the menu or redesign them entirely.
+  </Accordion>
+</AccordionGroup>
+
+The quadrant for each item is returned in the `quadrant` field of `GET /api/v1/intelligence/menu/engineering`:
+
+```json
+{
+  "item_name": "Arrachera a las Brasas",
+  "quadrant": "star",
+  "quadrant_label": "Estrella",
+  "action": "Proteger — no cambiar precio ni receta"
+}
+```

@@ -1,0 +1,261 @@
+---
+title: "Get started with Restaurantero Pro"
+description: "Learn how to authenticate, send your first Corte Z to Restaurantero Pro, and query your first KPI intelligence endpoint in under 10 minutes."
+---
+
+This guide walks you through the minimum steps needed to connect your POS to Restaurantero Pro, push a Corte Z, and retrieve processed KPI data. By the end you will have confirmed that authentication works, that ingestion is accepted, and that the intelligence endpoints return data.
+
+<Steps>
+  <Step title="Get your API key">
+    Log in to the Restaurantero Pro dashboard at `https://api.restauranteropro.com`, navigate to **Settings → Integrations → API Keys**, and generate a key for the branch you want to connect.
+
+    You will receive two values — store both in your environment configuration:
+
+    ```bash
+    RESTAURANTERO_API_KEY=rpro_live_xxxxxxxxxxxxxxxxxxxxxxxx
+    RESTAURANTERO_BRANCH_IDENTIFIER=b1c2d3e4-f5a6-7890-abcd-ef1234567890
+    ```
+
+    To work safely during development, generate a **sandbox** key instead (`rpro_test_xxx`) and point your base URL to `https://sandbox.restauranteropro.com/api/v1`.
+  </Step>
+
+  <Step title="Test the connection with GET /api/v1/ping">
+    Before sending any data, confirm that your key is valid and the branch is correctly configured.
+
+    <CodeGroup>
+
+    ```http HTTP
+    GET /api/v1/ping HTTP/1.1
+    Host: api.restauranteropro.com
+    X-API-Key: rpro_live_xxxxxxxxxxxxxxxxxxxxxxxx
+    ```
+
+    ```php PHP
+    $response = Http::withHeaders([
+        'X-API-Key' => config('restaurantero.api_key'),
+    ])->get(config('restaurantero.base_url') . '/ping');
+    ```
+
+    ```bash cURL
+    curl -X GET https://api.restauranteropro.com/api/v1/ping \
+      -H "X-API-Key: rpro_live_xxxxxxxxxxxxxxxxxxxxxxxx"
+    ```
+
+    </CodeGroup>
+
+    A successful response confirms the key, the branch name, and the active plan:
+
+    ```json
+    {
+      "data": {
+        "type": "ping",
+        "attributes": {
+          "status": "ok",
+          "branch_name": "Pitic",
+          "plan": "pro",
+          "message": "Conexión establecida correctamente con Restaurantero Pro."
+        }
+      }
+    }
+    ```
+
+    If you receive a `401`, check that the `X-API-Key` header is correctly set and that you are targeting the right environment (production vs sandbox).
+  </Step>
+
+  <Step title="Send a minimal Corte Z">
+    The Corte Z is the primary data push that triggers daily processing. Send all supporting endpoints first (orders, discounts, cancellations, payments, sales), then send the cash-register cut last — it acts as the trigger.
+
+    For this quickstart, you can send a minimal Corte Z on its own to verify the ingestion pipeline. Generate a UUID v4 to use as the idempotency key — store it, because you will reuse the same key if you need to retry.
+
+    <CodeGroup>
+
+    ```http HTTP
+    POST /api/v1/ingest/cash-register HTTP/1.1
+    Host: api.restauranteropro.com
+    X-API-Key: rpro_live_xxxxxxxxxxxxxxxxxxxxxxxx
+    X-Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
+    Content-Type: application/json
+
+    {
+      "data": {
+        "type": "cash-register",
+        "attributes": {
+          "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+          "closing_type": "zout",
+          "start_at": "2026-05-15T07:00:00-07:00",
+          "end_at": "2026-05-15T23:45:00-07:00",
+          "status": "completed",
+          "summaries": [
+            {
+              "type": "cash_sales",
+              "name": "Venta Efectivo",
+              "amount_cents": 125000
+            },
+            {
+              "type": "card_sales",
+              "name": "Venta Tarjeta",
+              "amount_cents": 409550
+            }
+          ]
+        },
+        "meta": {
+          "pos_name": "restaurant_controller",
+          "pos_version": "3.2.1",
+          "pos_variant": "full_dining",
+          "sent_at": "2026-05-15T23:46:00Z",
+          "cashier_name": "Ana García",
+          "cash_register_name": "CAJA 1"
+        }
+      }
+    }
+    ```
+
+    ```php PHP
+    $closingId = $cashRegisterOpening->identifier; // UUID from your POS model
+
+    $response = Http::withHeaders([
+        'X-API-Key'         => config('restaurantero.api_key'),
+        'X-Idempotency-Key' => $closingId,
+        'Content-Type'      => 'application/json',
+    ])->post(config('restaurantero.base_url') . '/ingest/cash-register', [
+        'data' => [
+            'type' => 'cash-register',
+            'attributes' => [
+                'branch_identifier' => config('restaurantero.branch_identifier'),
+                'closing_type'      => 'zout',
+                'start_at'          => $cashRegisterOpening->start_at->toIso8601String(),
+                'end_at'            => $cashRegisterOpening->end_at->toIso8601String(),
+                'status'            => 'completed',
+                'summaries'         => $cashRegisterOpening->summaries->map(fn($s) => [
+                    'type'         => $s->type,
+                    'name'         => $s->name,
+                    'amount_cents' => (int) ($s->amount * 100),
+                ])->toArray(),
+            ],
+            'meta' => [
+                'pos_name'    => 'restaurant_controller',
+                'pos_version' => config('app.version', '1.0.0'),
+                'pos_variant' => 'full_dining',
+                'sent_at'     => now()->toIso8601String(),
+            ],
+        ],
+    ]);
+    ```
+
+    </CodeGroup>
+
+    The API returns `202 Accepted` — not `200`. Processing is asynchronous. The response body confirms the Corte Z was queued:
+
+    ```json
+    {
+      "data": {
+        "type": "cash-register-ingest",
+        "id": "ingest_uuid",
+        "attributes": {
+          "queued": true,
+          "closing_type": "zout",
+          "message": "Corte Z recibido. Los cubos del día se regenerarán en los próximos segundos."
+        }
+      }
+    }
+    ```
+
+    <Note>
+    Cube regeneration takes approximately 5 seconds after a Corte Z is received. Configure a `snapshot.completed` webhook to receive a notification when the intelligence data is ready to query, instead of polling.
+    </Note>
+  </Step>
+
+  <Step title="Query your first KPI endpoint">
+    Once the snapshot is complete, query the consolidated KPI endpoint. It returns all key metrics in a single response with benchmark statuses — ideal for a dashboard summary widget.
+
+    <CodeGroup>
+
+    ```http HTTP
+    GET /api/v1/intelligence/kpis?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890&date_from=2026-05-15&date_to=2026-05-15 HTTP/1.1
+    Host: api.restauranteropro.com
+    X-API-Key: rpro_live_xxxxxxxxxxxxxxxxxxxxxxxx
+    ```
+
+    ```php PHP
+    $response = Http::withHeaders([
+        'X-API-Key' => config('restaurantero.api_key'),
+    ])->get(config('restaurantero.base_url') . '/intelligence/kpis', [
+        'branch_identifier' => config('restaurantero.branch_identifier'),
+        'date_from'         => '2026-05-15',
+        'date_to'           => '2026-05-15',
+    ]);
+    ```
+
+    ```bash cURL
+    curl -X GET \
+      "https://api.restauranteropro.com/api/v1/intelligence/kpis?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890&date_from=2026-05-15&date_to=2026-05-15" \
+      -H "X-API-Key: rpro_live_xxxxxxxxxxxxxxxxxxxxxxxx"
+    ```
+
+    </CodeGroup>
+
+    The response contains every KPI with its value, unit, traffic-light status, and the benchmark thresholds used to determine that status:
+
+    ```json
+    {
+      "data": {
+        "type": "kpis",
+        "attributes": {
+          "kpis": [
+            {
+              "key": "food_cost_pct",
+              "label": "Food Cost",
+              "value": 30.0,
+              "unit": "%",
+              "status": "yellow",
+              "benchmark_green": "< 30%",
+              "benchmark_red": "> 38%"
+            },
+            {
+              "key": "beverage_cost_pct",
+              "label": "Beverage Cost",
+              "value": 20.0,
+              "unit": "%",
+              "status": "green",
+              "benchmark_green": "< 20%",
+              "benchmark_red": "> 28%"
+            },
+            {
+              "key": "labor_cost_pct",
+              "label": "Labor Cost",
+              "value": 30.0,
+              "unit": "%",
+              "status": "yellow",
+              "benchmark_green": "< 30%",
+              "benchmark_red": "> 35%"
+            },
+            {
+              "key": "ebitda_pct",
+              "label": "EBITDA",
+              "value": 19.5,
+              "unit": "%",
+              "status": "yellow",
+              "benchmark_green": "> 20%",
+              "benchmark_red": "< 10%"
+            }
+          ]
+        },
+        "meta": {
+          "period": { "from": "2026-05-15", "to": "2026-05-15" }
+        }
+      }
+    }
+    ```
+
+    A `yellow` status means the KPI is in a watch zone — not yet critical, but worth monitoring. `green` is within benchmark. `red` requires immediate attention.
+  </Step>
+</Steps>
+
+## Next steps
+
+Now that you have confirmed the end-to-end flow, explore the full integration:
+
+- Read [API conventions](/concepts/conventions) to understand the JSON:API structure, the money-in-cents rule, and all query parameters.
+- Read [Idempotent ingestion](/concepts/idempotency) to implement safe retry logic before going to production.
+- Read the [data model](/concepts/data-model) to understand how branches, shifts, and closing types map to the intelligence outputs.
+- Follow the [integration flow guide](/guides/integration-flow) for the complete six-endpoint ingestion sequence your POS must send on every Corte Z.

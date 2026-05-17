@@ -1,0 +1,94 @@
+---
+title: "GET /api/v1/live/sales/today"
+sidebarTitle: "Live Sales"
+description: "Get real-time sales totals for the active shift, including covers served, running average ticket, and a projected day total compared to last week."
+---
+
+The Live Sales endpoint returns the current state of the active shift: how much has been sold so far, how many covers have been served, the running average ticket, and a projection of where the day will end based on historical patterns. Use this to power a live revenue ticker or shift progress widget in the manager's POS view.
+
+<Note>
+  This endpoint reflects data from the **current open shift only**. Historical data for closed periods is available through the [Intelligence endpoints](/api/intelligence/overview). Only `branch_identifier` is required — there are no date parameters because the response always covers the current active shift.
+</Note>
+
+## Request
+
+```http
+GET /api/v1/live/sales/today
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+## Query parameters
+
+<ParamField query="branch_identifier" type="string" required>
+  UUID of the branch to query.
+</ParamField>
+
+## Response fields
+
+<ResponseField name="data.attributes.as_of" type="string">
+  ISO 8601 timestamp indicating the exact moment the data was calculated. Reflects the branch's configured timezone.
+</ResponseField>
+
+<ResponseField name="data.attributes.shift" type="string">
+  The currently active shift: `breakfast`, `lunch`, `dinner`, or `bar`.
+</ResponseField>
+
+<ResponseField name="data.attributes.sales_so_far_cents" type="integer">
+  Total sales recorded in the current shift so far, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.covers_so_far" type="integer">
+  Total guests served in the current shift so far.
+</ResponseField>
+
+<ResponseField name="data.attributes.avg_ticket_cents" type="integer">
+  Running average ticket per cover for the current shift, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.vs_same_day_last_week" type="object">
+  Comparison against the same shift on the same weekday last week.
+
+  <Expandable title="properties">
+    <ResponseField name="sales_pct_change" type="number">
+      Sales change percentage vs. last week's equivalent shift (positive = this week is higher).
+    </ResponseField>
+    <ResponseField name="covers_pct_change" type="number">
+      Cover count change percentage vs. last week's equivalent shift.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="data.attributes.projected_day_total_cents" type="integer">
+  Projected total sales for the full day, extrapolated from current sales velocity and historical patterns for this day of the week. In centavos.
+</ResponseField>
+
+## Example
+
+```http
+GET /api/v1/live/sales/today?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+```json
+{
+  "data": {
+    "type": "live_sales",
+    "attributes": {
+      "as_of": "2026-05-15T21:30:00-07:00",
+      "shift": "dinner",
+      "sales_so_far_cents": 312450,
+      "covers_so_far": 51,
+      "avg_ticket_cents": 6127,
+      "vs_same_day_last_week": {
+        "sales_pct_change": 8.3,
+        "covers_pct_change": 5.1
+      },
+      "projected_day_total_cents": 534550
+    }
+  }
+}
+```
+
+<Tip>
+  Poll this endpoint every 5–10 minutes to keep a live sales ticker current without exceeding rate limits. For push-based updates, use the `snapshot.completed` webhook instead.
+</Tip>

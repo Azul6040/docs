@@ -1,0 +1,213 @@
+---
+title: "GET /api/v1/intelligence/sales/summary"
+sidebarTitle: "Sales Summary"
+description: "Retrieve aggregated sales totals, covers, average ticket, and shift breakdown for a date range. Includes period-over-period comparison."
+---
+
+The Sales Summary endpoint gives you the top-level financial picture for a period: total sales, covers, average ticket, shift-level breakdown, and a comparison against the previous equivalent period. Use it to power summary cards, trend sparklines, or shift performance tables in your POS dashboard.
+
+## Request
+
+```http
+GET /api/v1/intelligence/sales/summary
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+## Query parameters
+
+<ParamField query="branch_identifier" type="string" required>
+  UUID of the branch to query.
+</ParamField>
+
+<ParamField query="date_from" type="string" required>
+  Start of the period (`YYYY-MM-DD`). Omit if using `period`.
+</ParamField>
+
+<ParamField query="date_to" type="string" required>
+  End of the period (`YYYY-MM-DD`). Omit if using `period`.
+</ParamField>
+
+<ParamField query="period" type="string">
+  Period shortcut: `today`, `yesterday`, `week`, or `month`. See the [overview](/api/intelligence/overview) for details.
+</ParamField>
+
+## Response fields
+
+<ResponseField name="data.attributes.total_sales_cents" type="integer">
+  Total gross sales for the period, in centavos (MXN).
+</ResponseField>
+
+<ResponseField name="data.attributes.total_sales_no_iva_cents" type="integer">
+  Total sales excluding IVA (16%), in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.food_sales_cents" type="integer">
+  Sales from food items only, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.beverage_sales_cents" type="integer">
+  Sales from non-alcoholic beverages, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.bar_sales_cents" type="integer">
+  Sales from alcoholic beverages, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.covers_total" type="integer">
+  Total number of guests served during the period.
+</ResponseField>
+
+<ResponseField name="data.attributes.tables_served_total" type="integer">
+  Total number of tables turned during the period.
+</ResponseField>
+
+<ResponseField name="data.attributes.avg_ticket_cents" type="integer">
+  Average ticket per cover, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.avg_pax" type="number">
+  Average guests per table.
+</ResponseField>
+
+<ResponseField name="data.attributes.vs_previous_period" type="object">
+  Period-over-period comparison percentages.
+
+  <Expandable title="properties">
+    <ResponseField name="total_sales_pct_change" type="number">
+      Sales change vs. the equivalent prior period (positive = growth).
+    </ResponseField>
+    <ResponseField name="covers_pct_change" type="number">
+      Cover count change vs. the prior period.
+    </ResponseField>
+    <ResponseField name="avg_ticket_pct_change" type="number">
+      Average ticket change vs. the prior period.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="data.attributes.by_shift" type="object">
+  Sales and covers broken down by shift: `breakfast`, `lunch`, `dinner`, and `bar`.
+
+  <Expandable title="properties">
+    <ResponseField name="sales_cents" type="integer">
+      Total sales for this shift, in centavos.
+    </ResponseField>
+    <ResponseField name="covers" type="integer">
+      Total covers served during this shift.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example
+
+```http
+GET /api/v1/intelligence/sales/summary?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890&date_from=2026-05-01&date_to=2026-05-15
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+```json
+{
+  "data": {
+    "type": "sales_summary",
+    "attributes": {
+      "total_sales_cents": 8234500,
+      "total_sales_no_iva_cents": 7098707,
+      "food_sales_cents": 5648741,
+      "beverage_sales_cents": 2585759,
+      "bar_sales_cents": 0,
+      "covers_total": 1341,
+      "tables_served_total": 372,
+      "avg_ticket_cents": 6143,
+      "avg_pax": 3.6,
+      "vs_previous_period": {
+        "total_sales_pct_change": 12.4,
+        "covers_pct_change": 8.1,
+        "avg_ticket_pct_change": 3.9
+      },
+      "by_shift": {
+        "breakfast": { "sales_cents": 0, "covers": 0 },
+        "lunch": { "sales_cents": 5234500, "covers": 854 },
+        "dinner": { "sales_cents": 3000000, "covers": 487 },
+        "bar": { "sales_cents": 0, "covers": 0 }
+      }
+    },
+    "meta": {
+      "period": { "from": "2026-05-01", "to": "2026-05-15" },
+      "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890"
+    }
+  }
+}
+```
+
+---
+
+## Sub-endpoints
+
+### Sales by hour — `GET /api/v1/intelligence/sales/by-hour`
+
+Returns sales, covers, and table counts broken down by hour. Use this to build occupancy heat maps and optimize staffing schedules. The response includes `peak_hour` and `valley_hour` pre-calculated for your convenience.
+
+```http
+GET /api/v1/intelligence/sales/by-hour?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890&date_from=2026-05-01&date_to=2026-05-15
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+```json
+{
+  "data": {
+    "type": "sales_by_hour",
+    "attributes": {
+      "peak_hour": "14:00",
+      "valley_hour": "10:00",
+      "hours": [
+        { "hour": "13:00", "sales_cents": 824500, "covers": 134, "tables": 38 },
+        { "hour": "14:00", "sales_cents": 1234000, "covers": 201, "tables": 56 },
+        { "hour": "15:00", "sales_cents": 982000, "covers": 159, "tables": 44 }
+      ]
+    }
+  }
+}
+```
+
+### Sales by employee — `GET /api/v1/intelligence/sales/by-employee`
+
+Returns a ranked list of servers with their individual sales totals, cover counts, average ticket, and tip percentages. This powers the Star Employees ranking in the Restaurantero Pro dashboard.
+
+<Note>
+  This endpoint only returns data if your POS sends `waiter_name` on each order line via `POST /api/v1/ingest/orders`. Without that field, the ranking has no data to compute.
+</Note>
+
+```http
+GET /api/v1/intelligence/sales/by-employee?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890&date_from=2026-05-01&date_to=2026-05-15
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+```json
+{
+  "data": {
+    "type": "sales_by_employee",
+    "attributes": {
+      "employees": [
+        {
+          "name": "Ana García",
+          "total_sales_cents": 1823400,
+          "covers": 298,
+          "avg_ticket_cents": 6117,
+          "tips_cents": 182340,
+          "tip_pct": 10.0,
+          "rank": 1
+        },
+        {
+          "name": "Luis Herrera",
+          "total_sales_cents": 1456800,
+          "covers": 241,
+          "avg_ticket_cents": 6045,
+          "tips_cents": 130000,
+          "tip_pct": 8.9,
+          "rank": 2
+        }
+      ]
+    }
+  }
+}
+```

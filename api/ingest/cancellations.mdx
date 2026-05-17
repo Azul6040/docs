@@ -1,0 +1,193 @@
+---
+title: "POST /api/v1/ingest/cancellations"
+sidebarTitle: "Cancellations"
+description: "Send cancelled order lines and voids to Restaurantero Pro. Excess cancellations automatically trigger alerts in the operator dashboard."
+---
+
+Use this endpoint to send all cancelled order lines and voids for the shift. Restaurantero Pro tracks cancellations separately from discounts because they represent items that were ordered but never delivered or billed — a key signal for operational issues and potential revenue leakage. When the number or value of cancellations exceeds normal thresholds, the system automatically triggers a `cancellations_high` alert in the operator dashboard. Submit this endpoint after order lines and discounts, but before payments, sales, and the cash register cut.
+
+## Endpoint
+
+```http
+POST https://api.restauranteropro.com/api/v1/ingest/cancellations
+```
+
+## Required headers
+
+<ParamField header="X-API-Key" type="string" required>
+  Your branch API key.
+</ParamField>
+
+<ParamField header="X-Idempotency-Key" type="string" required>
+  A UUID v4 unique to this cancellations submission. Append a suffix to the cash register cut's identifier, for example: `{CashRegisterOpening.identifier}-cancellations`.
+</ParamField>
+
+<ParamField header="Content-Type" type="string" required>
+  Must be `application/json`.
+</ParamField>
+
+## Request body
+
+<ParamField body="data" type="object" required>
+  Top-level wrapper following JSON:API structure.
+
+  <Expandable title="properties" defaultOpen>
+    <ParamField body="data.type" type="string" required>
+      Always `"cancellations"`.
+    </ParamField>
+
+    <ParamField body="data.attributes" type="object" required>
+      <Expandable title="attributes">
+        <ParamField body="data.attributes.branch_identifier" type="string" required>
+          UUID of the branch sending the data.
+        </ParamField>
+
+        <ParamField body="data.attributes.date" type="string" required>
+          Date of the cancellation data in `YYYY-MM-DD` format.
+        </ParamField>
+
+        <ParamField body="data.attributes.closing_type" type="string" required>
+          Type of cut this submission is associated with: `"xout"` or `"zout"`.
+        </ParamField>
+
+        <ParamField body="data.attributes.cancellations" type="object[]" required>
+          Array of cancellation records for the shift.
+
+          <Expandable title="cancellation object fields">
+            <ParamField body="cancellation_identifier" type="string" required>
+              UUID of the cancellation record in your POS.
+            </ParamField>
+
+            <ParamField body="item_name" type="string" required>
+              Name of the cancelled item (e.g., `"Filete al Gusto"`).
+            </ParamField>
+
+            <ParamField body="item_sku" type="string">
+              SKU of the cancelled item in your POS.
+            </ParamField>
+
+            <ParamField body="quantity" type="integer" required>
+              Number of units cancelled.
+            </ParamField>
+
+            <ParamField body="amount_cents" type="integer" required>
+              Total value of the cancellation in centavos (quantity × unit price before discount).
+            </ParamField>
+
+            <ParamField body="reason" type="string" required>
+              Reason for the cancellation (e.g., `"Error de captura"`, `"Cliente cambió de opinión"`).
+            </ParamField>
+
+            <ParamField body="cancelled_by" type="string" required>
+              Full name of the staff member who performed the cancellation.
+            </ParamField>
+
+            <ParamField body="authorized_by" type="string" required>
+              Full name of the manager or supervisor who authorized the cancellation.
+            </ParamField>
+
+            <ParamField body="cancelled_at" type="string" required>
+              ISO 8601 timestamp with timezone of when the cancellation occurred (e.g., `"2026-05-15T21:30:00-07:00"`).
+            </ParamField>
+          </Expandable>
+        </ParamField>
+      </Expandable>
+    </ParamField>
+
+    <ParamField body="data.meta" type="object">
+      <Expandable title="meta fields">
+        <ParamField body="data.meta.pos_name" type="string">
+          Name of the POS sending the data.
+        </ParamField>
+
+        <ParamField body="data.meta.sent_at" type="string">
+          ISO 8601 timestamp of when the request was sent.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Automatic alert behavior
+
+Restaurantero Pro analyzes the cancellations you send and automatically compares them against the branch's historical baseline. If the count or total value of cancellations for the day exceeds the normal threshold, the system raises a `cancellations_high` alert (severity: `yellow` or `red`) in the operator dashboard and, if configured, dispatches an `alert.triggered` webhook event.
+
+The system also detects patterns such as a single staff member accounting for a disproportionate share of voids, which surfaces as a `void_alert`.
+
+<Warning>
+  The alert thresholds are calculated automatically from historical data. There is no configuration required on your end — just make sure you send all cancellations accurately so the baseline remains reliable.
+</Warning>
+
+## Request example
+
+```json
+{
+  "data": {
+    "type": "cancellations",
+    "attributes": {
+      "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+      "date": "2026-05-15",
+      "closing_type": "zout",
+      "cancellations": [
+        {
+          "cancellation_identifier": "canc-uuid-1",
+          "item_name": "Filete al Gusto",
+          "item_sku": "FILETE-02",
+          "quantity": 1,
+          "amount_cents": 38500,
+          "reason": "Error de captura",
+          "cancelled_by": "Luis Herrera",
+          "authorized_by": "Roberto Pérez",
+          "cancelled_at": "2026-05-15T21:30:00-07:00"
+        },
+        {
+          "cancellation_identifier": "canc-uuid-2",
+          "item_name": "Corona Extra",
+          "item_sku": "CORONA-355",
+          "quantity": 2,
+          "amount_cents": 9000,
+          "reason": "Cliente cambió de opinión",
+          "cancelled_by": "Ana García",
+          "authorized_by": "Roberto Pérez",
+          "cancelled_at": "2026-05-15T20:15:00-07:00"
+        }
+      ]
+    },
+    "meta": {
+      "pos_name": "restaurant_controller",
+      "sent_at": "2026-05-15T23:45:00Z"
+    }
+  }
+}
+```
+
+## Response
+
+### 202 Accepted
+
+The cancellations were received and queued for processing.
+
+<ResponseField name="data" type="object">
+  <Expandable title="properties" defaultOpen>
+    <ResponseField name="data.type" type="string">
+      Always `"cancellations-ingest"`.
+    </ResponseField>
+
+    <ResponseField name="data.attributes.queued" type="boolean">
+      `true` when the submission has been accepted and queued.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```json
+{
+  "data": {
+    "type": "cancellations-ingest",
+    "attributes": { "queued": true }
+  }
+}
+```
+
+<Tip>
+  If your shift had zero cancellations, you can send an empty array: `"cancellations": []`. This signals to Restaurantero Pro that the shift was clean, rather than leaving the data missing.
+</Tip>

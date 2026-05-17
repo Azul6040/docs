@@ -1,0 +1,116 @@
+---
+title: "GET /api/v1/intelligence/kpis"
+sidebarTitle: "KPIs"
+description: "Retrieve all key performance indicators in one call with traffic-light benchmark status — ideal for POS dashboard summary widgets."
+---
+
+The KPIs endpoint returns every major financial health indicator for a period in a single response, each with its benchmark status pre-computed. This is the fastest way to power a summary widget or dashboard home screen — you get all the signals you need without making multiple requests to individual endpoints.
+
+## Request
+
+```http
+GET /api/v1/intelligence/kpis
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+## Query parameters
+
+<ParamField query="branch_identifier" type="string" required>
+  UUID of the branch to query.
+</ParamField>
+
+<ParamField query="date_from" type="string" required>
+  Start of the period (`YYYY-MM-DD`). Omit if using `period`.
+</ParamField>
+
+<ParamField query="date_to" type="string" required>
+  End of the period (`YYYY-MM-DD`). Omit if using `period`.
+</ParamField>
+
+<ParamField query="period" type="string">
+  Period shortcut: `today`, `yesterday`, `week`, or `month`.
+</ParamField>
+
+## Response fields
+
+<ResponseField name="data.attributes.kpis" type="array">
+  Array of KPI objects, one per indicator.
+
+  <Expandable title="KPI object properties">
+    <ResponseField name="key" type="string">
+      Machine-readable KPI identifier (e.g., `food_cost_pct`, `ebitda_pct`).
+    </ResponseField>
+    <ResponseField name="label" type="string">
+      Human-readable display name.
+    </ResponseField>
+    <ResponseField name="value" type="number">
+      Current value for the period. Monetary KPIs are in centavos; percentage KPIs are plain percentages.
+    </ResponseField>
+    <ResponseField name="unit" type="string">
+      Unit of measurement: `%` for percentages, `cents` for monetary values.
+    </ResponseField>
+    <ResponseField name="status" type="string">
+      Benchmark traffic-light status: `green`, `yellow`, or `red`.
+    </ResponseField>
+    <ResponseField name="benchmark_green" type="string">
+      Human-readable description of the green threshold (e.g., `"< 30%"`).
+    </ResponseField>
+    <ResponseField name="benchmark_red" type="string">
+      Human-readable description of the red threshold (e.g., `"> 38%"`).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="data.meta.period" type="object">
+  The resolved period boundaries (`from` and `to` dates).
+</ResponseField>
+
+## Example
+
+```http
+GET /api/v1/intelligence/kpis?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890&date_from=2026-05-01&date_to=2026-05-15
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+```json
+{
+  "data": {
+    "type": "kpis",
+    "attributes": {
+      "kpis": [
+        { "key": "food_cost_pct",     "label": "Food Cost",     "value": 30.0, "unit": "%",     "status": "yellow", "benchmark_green": "< 30%",    "benchmark_red": "> 38%"   },
+        { "key": "beverage_cost_pct", "label": "Beverage Cost", "value": 20.0, "unit": "%",     "status": "green",  "benchmark_green": "< 20%",    "benchmark_red": "> 28%"   },
+        { "key": "labor_cost_pct",    "label": "Labor Cost",    "value": 30.0, "unit": "%",     "status": "yellow", "benchmark_green": "< 30%",    "benchmark_red": "> 35%"   },
+        { "key": "prime_cost_pct",    "label": "Prime Cost",    "value": 56.9, "unit": "%",     "status": "green",  "benchmark_green": "< 60%",    "benchmark_red": "> 65%"   },
+        { "key": "ebitda_pct",        "label": "EBITDA",        "value": 19.5, "unit": "%",     "status": "yellow", "benchmark_green": "> 20%",    "benchmark_red": "< 10%"   },
+        { "key": "net_profit_pct",    "label": "Utilidad Neta", "value": 17.6, "unit": "%",     "status": "green",  "benchmark_green": "> 15%",    "benchmark_red": "< 5%"    },
+        { "key": "avg_ticket_cents",  "label": "Ticket Prom.",  "value": 6143, "unit": "cents", "status": "green",  "benchmark_green": "> 28000",  "benchmark_red": "< 18000" },
+        { "key": "cash_variance_pct", "label": "Varianza Caja", "value": 0.06, "unit": "%",     "status": "green",  "benchmark_green": "< 1%",     "benchmark_red": "> 3%"    }
+      ]
+    },
+    "meta": {
+      "period": { "from": "2026-05-01", "to": "2026-05-15" }
+    }
+  }
+}
+```
+
+## Benchmark thresholds
+
+All thresholds are based on industry benchmarks for the Mexican restaurant sector. The yellow zone is the caution range — the KPI needs monitoring but is not yet critical. The red zone signals that the indicator has crossed a risk threshold and requires immediate attention.
+
+| KPI | Green | Yellow | Red |
+|---|---|---|---|
+| Food Cost % | < 30% | 30–38% | > 38% |
+| Beverage Cost % | < 20% | 20–28% | > 28% |
+| Bar Cost % | < 25% | 25–30% | > 30% |
+| Labor Cost % | < 30% | 30–35% | > 35% |
+| Prime Cost % | < 60% | 60–65% | > 65% |
+| EBITDA % | > 20% | 10–20% | < 10% |
+| Utilidad Neta % | > 15% | 5–15% | < 5% |
+| Varianza Caja | < 1% | 1–3% | > 3% |
+| Inventario DSI | < 7 days | 7–14 days | > 14 days |
+
+<Tip>
+  For endpoints that require purchase or payroll data (Food Cost, Labor Cost), the corresponding KPI values will be `null` if the restaurant owner has not entered those figures in the Restaurantero Pro dashboard. Always handle `null` values gracefully in your UI.
+</Tip>

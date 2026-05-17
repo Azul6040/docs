@@ -1,0 +1,118 @@
+---
+title: "GET /api/v1/intelligence/food-cost"
+sidebarTitle: "Food Cost"
+description: "Retrieve food, beverage, and bar cost percentages with category-level breakdown. Requires purchases to be recorded in the dashboard."
+---
+
+The Food Cost endpoint returns cost percentages for food, beverages, and bar, along with a category-level breakdown showing purchases, sales, and cost percentage for each category. Use it to pinpoint which product categories are driving up your client's cost of goods.
+
+<Warning>
+  This endpoint requires the restaurant owner to have recorded their purchases in the Restaurantero Pro dashboard. If no purchase data has been entered for the period, the response will return `null` for cost fields.
+</Warning>
+
+## Request
+
+```http
+GET /api/v1/intelligence/food-cost
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+## Query parameters
+
+<ParamField query="branch_identifier" type="string" required>
+  UUID of the branch to query.
+</ParamField>
+
+<ParamField query="date_from" type="string" required>
+  Start of the period (`YYYY-MM-DD`). Omit if using `period`.
+</ParamField>
+
+<ParamField query="date_to" type="string" required>
+  End of the period (`YYYY-MM-DD`). Omit if using `period`.
+</ParamField>
+
+<ParamField query="period" type="string">
+  Period shortcut: `today`, `yesterday`, `week`, or `month`.
+</ParamField>
+
+## Response fields
+
+<ResponseField name="data.attributes.food_cost_pct" type="number">
+  Food cost as a percentage of food sales.
+</ResponseField>
+
+<ResponseField name="data.attributes.food_cost_status" type="string">
+  Benchmark status for food cost: `green` (< 30%), `yellow` (30–38%), or `red` (> 38%).
+</ResponseField>
+
+<ResponseField name="data.attributes.beverage_cost_pct" type="number">
+  Beverage cost as a percentage of beverage sales.
+</ResponseField>
+
+<ResponseField name="data.attributes.beverage_cost_status" type="string">
+  Benchmark status for beverage cost: `green` (< 20%), `yellow` (20–28%), or `red` (> 28%).
+</ResponseField>
+
+<ResponseField name="data.attributes.bar_cost_pct" type="number">
+  Bar (alcoholic beverage) cost as a percentage of bar sales. Returns `0.0` if no bar sales were recorded.
+</ResponseField>
+
+<ResponseField name="data.attributes.by_category" type="array">
+  Category-level cost breakdown.
+
+  <Expandable title="Category object properties">
+    <ResponseField name="category" type="string">
+      Category name as it was sent in `POST /api/v1/ingest/orders` (e.g., `"Carnes"`, `"Mariscos"`).
+    </ResponseField>
+    <ResponseField name="purchases_cents" type="integer">
+      Total purchases recorded for this category during the period, in centavos.
+    </ResponseField>
+    <ResponseField name="sales_cents" type="integer">
+      Total sales attributed to this category during the period, in centavos.
+    </ResponseField>
+    <ResponseField name="cost_pct" type="number">
+      Cost percentage for this category (`purchases / sales × 100`).
+    </ResponseField>
+    <ResponseField name="status" type="string">
+      Benchmark status for this category: `green`, `yellow`, or `red`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example
+
+```http
+GET /api/v1/intelligence/food-cost?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890&date_from=2026-05-01&date_to=2026-05-15
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+```json
+{
+  "data": {
+    "type": "food_cost",
+    "attributes": {
+      "food_cost_pct": 30.0,
+      "food_cost_status": "yellow",
+      "beverage_cost_pct": 20.0,
+      "beverage_cost_status": "green",
+      "bar_cost_pct": 0.0,
+      "by_category": [
+        {
+          "category": "Carnes",
+          "purchases_cents": 845000,
+          "sales_cents": 2350000,
+          "cost_pct": 35.9,
+          "status": "yellow"
+        },
+        {
+          "category": "Mariscos",
+          "purchases_cents": 420000,
+          "sales_cents": 1850000,
+          "cost_pct": 22.7,
+          "status": "green"
+        }
+      ]
+    }
+  }
+}
+```

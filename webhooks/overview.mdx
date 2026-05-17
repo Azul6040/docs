@@ -1,0 +1,153 @@
+---
+title: "Set up webhooks for Restaurantero Pro events"
+description: "Register a webhook endpoint to receive real-time Restaurantero Pro events like snapshot completion, KPI alerts, and cash variance notifications."
+---
+
+Restaurantero Pro processes your POS data asynchronously — when a Corte Z arrives, the platform regenerates all your financial cubes in the background. Webhooks let you know the moment those results are ready, so your integration can react instantly without polling. You register a URL, choose the events you care about, and Restaurantero Pro sends signed HTTP POST requests to that URL whenever matching events occur.
+
+## What webhooks are used for
+
+Use webhooks to:
+
+- **Trigger dashboard refreshes** — know exactly when the day's P&L, KPIs, and alerts are ready to display after a Corte Z.
+- **Push notifications** — send alerts to the restaurant owner or manager the moment a KPI crosses a risk threshold.
+- **Automate purchasing workflows** — react when the Tiendita Inteligente generates a new shopping list.
+- **Detect cash variances immediately** — notify a manager when a cash register discrepancy exceeds the configured limit.
+
+<Tip>
+Using webhooks eliminates the need to poll intelligence endpoints after ingesting a Corte Z. Subscribe to `snapshot.completed` and fetch data only when it is ready.
+</Tip>
+
+## Register a webhook endpoint
+
+Send a `POST` request to `/api/v1/developer/webhooks` with your endpoint URL, the list of events you want to receive, and a secret string you choose. Restaurantero Pro uses this secret to sign every webhook payload so you can verify it came from us.
+
+```http
+POST /api/v1/developer/webhooks
+X-API-Key: rpro_live_abc123xyz789...
+Content-Type: application/json
+```
+
+```json
+{
+  "url": "https://tu-pos.com/webhooks/restaurantero",
+  "events": ["snapshot.completed", "alert.triggered", "cash.variance"],
+  "secret": "tu-secreto-para-verificar-firma"
+}
+```
+
+<Steps>
+  <Step title="Choose your endpoint URL">
+    Your endpoint must be publicly reachable over HTTPS. It should accept `POST` requests and return `200 OK` within a few seconds.
+  </Step>
+  <Step title="Select the events to subscribe to">
+    Pass an array of event names in the `events` field. You can subscribe to one event or all six — see the [event reference](/webhooks/events) for the full list.
+  </Step>
+  <Step title="Set a webhook secret">
+    Choose a long, random string for the `secret` field. Store it securely — you will use it to verify the `X-Restaurantero-Signature` header on every incoming request.
+  </Step>
+  <Step title="Test in Sandbox first">
+    Register your webhook against `https://sandbox.restauranteropro.com/api/v1` and send a test Corte Z to confirm delivery before switching to production.
+  </Step>
+</Steps>
+
+## Webhook payload structure
+
+Every event Restaurantero Pro delivers follows the same envelope structure:
+
+```json
+{
+  "event": "snapshot.completed",
+  "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+  "timestamp": "2026-05-15T23:52:00Z",
+  "data": {
+    "snapshot_type": "daily",
+    "date": "2026-05-15",
+    "cubes_regenerated": ["sales", "pnl", "cash_ledger", "menu_engineering"]
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `event` | string | The event name, e.g. `snapshot.completed` |
+| `branch_identifier` | UUID | The branch this event belongs to |
+| `timestamp` | ISO 8601 | When the event was emitted, in UTC |
+| `data` | object | Event-specific payload — varies by event type |
+
+## Verify the HMAC-SHA256 signature
+
+Every webhook request includes an `X-Restaurantero-Signature` header. Always verify this header before processing the payload. This protects you from spoofed requests sent by third parties.
+
+The signature is a hex-encoded HMAC-SHA256 of the raw request body, prefixed with `sha256=`. Compute the expected value using your webhook secret and compare it with a timing-safe function.
+
+<Warning>
+Never use a regular string comparison (`===`) to check signatures. Use a constant-time comparison function like `hash_equals()` to prevent timing attacks.
+</Warning>
+
+```php
+<?php
+
+// In your controller that receives Restaurantero Pro webhooks
+public function handleWebhook(Request $request): Response
+{
+    $signature = $request->header('X-Restaurantero-Signature');
+    $payload   = $request->getContent();
+    $secret    = config('restaurantero.webhook_secret');
+
+    // Compute expected signature
+    $expectedSignature = 'sha256=' . hash_hmac('sha256', $payload, $secret);
+
+    // Timing-safe comparison
+    if (! hash_equals($expectedSignature, $signature)) {
+        return response('Firma inválida', 401);
+    }
+
+    $event = $request->json('event');
+
+    match ($event) {
+        'snapshot.completed'        => $this->onSnapshotCompleted($request->json()->all()),
+        'alert.triggered'           => $this->onAlertTriggered($request->json()->all()),
+        'cash.variance'             => $this->onCashVariance($request->json()->all()),
+        'purchase.suggestion_ready' => $this->onSuggestionReady($request->json()->all()),
+        default                     => null,
+    };
+
+    return response('OK', 200);
+}
+```
+
+## Retry policy
+
+If your endpoint does not return `200 OK`, Restaurantero Pro retries the delivery up to four times:
+
+| Attempt | Timing |
+|---|---|
+| 1 | Immediately |
+| 2 | 5 seconds after attempt 1 |
+| 3 | 30 seconds after attempt 2 |
+| 4 | Marked as failed — visible in Dev Portal → Webhook Logs |
+
+<Note>
+Failed deliveries are logged in the Dev Portal under **Webhook Logs**, where you can inspect the request, the response your server returned, and manually retry if needed.
+</Note>
+
+## Best practices
+
+<AccordionGroup>
+  <Accordion title="Respond with 200 immediately">
+    Your endpoint should return `200 OK` as fast as possible — ideally before doing any processing. Dispatch the actual work to a background queue. If your handler takes more than a few seconds, Restaurantero Pro may time out and mark the delivery as failed.
+  </Accordion>
+  <Accordion title="Always verify the signature">
+    Reject any request where the signature does not match before reading the payload. This prevents replay attacks and spoofed deliveries from reaching your application logic.
+  </Accordion>
+  <Accordion title="Make your handler idempotent">
+    Restaurantero Pro may deliver the same event more than once if your server returned an error on the first attempt. Design your handler so processing the same event twice produces the same result.
+  </Accordion>
+  <Accordion title="Log every delivery">
+    Store the raw payload and timestamp of each webhook you receive. This makes debugging much easier if something goes wrong with your integration.
+  </Accordion>
+  <Accordion title="Use HTTPS">
+    Your endpoint URL must use HTTPS. Restaurantero Pro will not deliver webhooks to plain HTTP URLs.
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,182 @@
+---
+title: "API conventions and request format"
+description: "All Restaurantero Pro requests and responses use JSON:API structure. Monetary values are always integers in cents — never decimals."
+---
+
+All Restaurantero Pro endpoints follow a consistent set of conventions that apply to every request and response. Understanding these rules before you start building will save you debugging time — particularly the money-in-cents rule, which is the most common source of validation errors in new integrations.
+
+## JSON:API request structure
+
+Every `POST` request body wraps its payload in a `data` object with a `type`, an `attributes` object, and an optional `meta` object:
+
+```json
+{
+  "data": {
+    "type": "sales",
+    "attributes": {
+      "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+      "date": "2026-05-15",
+      "total_sales_cents": 534550
+    },
+    "meta": {
+      "pos_name": "restaurant_controller",
+      "pos_version": "3.2.1",
+      "sent_at": "2026-05-15T23:45:00Z"
+    }
+  }
+}
+```
+
+<ParamField body="data.type" type="string" required>
+  The resource type for this request. Examples: `"cash-register"`, `"sales"`, `"orders"`, `"payments"`.
+</ParamField>
+
+<ParamField body="data.attributes" type="object" required>
+  The payload fields for this request. Specific fields vary by endpoint.
+</ParamField>
+
+<ParamField body="data.meta" type="object">
+  Metadata about the POS system sending the data. Include `pos_name`, `pos_version`, and `sent_at` on all ingestion requests.
+</ParamField>
+
+## Money in cents — the critical rule
+
+<Warning>
+All monetary fields are integers representing centavos (cents). Never send decimal values. A request containing a decimal in any `_cents` field will be rejected with `422 RPRO_ERR_422_CENTS`.
+</Warning>
+
+Convert every peso amount to centavos before sending it:
+
+```
+$150.00 MXN   →  15000
+$534.50 MXN   →  53450
+$1,200.00 MXN →  120000
+```
+
+```json
+// Correct
+"total_sales_cents": 53450
+
+// Incorrect — never send decimals
+"total_sales": 534.50
+```
+
+This rule applies to every field whose name ends in `_cents`: `total_sales_cents`, `amount_cents`, `unit_price_cents`, `subtotal_cents`, `net_total_cents`, `tips_cents`, and all others.
+
+Using integers eliminates floating-point precision errors and makes all arithmetic on the server side exact.
+
+<Note>
+If your POS stores amounts using mutators that divide the stored integer by 100 before returning it (as Restaurant Controller's `OrderTicketLine` does for `unit_price` and `quantity`), remember to multiply by 100 before sending to Restaurantero Pro.
+</Note>
+
+## Date and time formats
+
+All date and timestamp fields use ISO 8601:
+
+| Field type | Format | Example |
+|---|---|---|
+| Date only | `YYYY-MM-DD` | `2026-05-15` |
+| Timestamp with timezone | `YYYY-MM-DDTHH:MM:SS±HH:MM` | `2026-05-15T23:45:00-07:00` |
+| UTC timestamp | `YYYY-MM-DDTHH:MM:SSZ` | `2026-05-15T23:46:00Z` |
+
+The timezone for `start_at` and `end_at` fields should reflect the branch's local timezone as configured in Restaurantero Pro. A branch in Hermosillo (which does not observe daylight saving time) uses `-07:00` year-round.
+
+## Query parameters for intelligence endpoints
+
+All `GET /api/v1/intelligence/*` endpoints accept the following query parameters:
+
+<ParamField query="branch_identifier" type="string" required>
+  UUID of the branch whose data you are querying. This is the `branch_identifier` you receive during onboarding and store in your environment configuration.
+</ParamField>
+
+<ParamField query="date_from" type="string" required>
+  Start of the period in `YYYY-MM-DD` format.
+</ParamField>
+
+<ParamField query="date_to" type="string" required>
+  End of the period in `YYYY-MM-DD` format.
+</ParamField>
+
+<ParamField query="period" type="string">
+  Optional shortcut that sets `date_from` and `date_to` automatically. Accepted values: `today`, `yesterday`, `week`, `month`. When `period` is provided, `date_from` and `date_to` are ignored.
+</ParamField>
+
+Example query string:
+
+```http
+GET /api/v1/intelligence/kpis?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890&date_from=2026-05-01&date_to=2026-05-15
+```
+
+## Successful response structure
+
+Intelligence endpoints return a `data` object with a `type`, an `attributes` object containing the requested data, and a `meta` object with the query period and branch identifier:
+
+```json
+{
+  "data": {
+    "type": "pnl_summary",
+    "attributes": {
+      "ebitda": {
+        "ebitda_cents": 1606376,
+        "ebitda_pct": 19.5,
+        "ebitda_status": "yellow"
+      }
+    },
+    "meta": {
+      "period": { "from": "2026-05-01", "to": "2026-05-15" },
+      "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+      "snapshot_date": "2026-05-15T06:00:00Z",
+      "benchmarks": {
+        "food_cost_status": "green",
+        "labor_cost_status": "yellow",
+        "ebitda_status": "yellow"
+      }
+    }
+  }
+}
+```
+
+## Error response structure
+
+All error responses follow a consistent format:
+
+```json
+{
+  "error": {
+    "code": "RPRO_ERR_422",
+    "message": "El campo total_sales_cents es requerido y debe ser un entero positivo.",
+    "field": "data.attributes.total_sales_cents",
+    "received_value": 534.50,
+    "request_id": "req_9f3k2m1x",
+    "docs": "https://docs.restauranteropro.com/errors#RPRO_ERR_422"
+  }
+}
+```
+
+<ResponseField name="error.code" type="string">
+  Internal error code. Use this to identify the error type programmatically (e.g., `RPRO_ERR_422_CENTS`).
+</ResponseField>
+
+<ResponseField name="error.message" type="string">
+  Human-readable description of the error.
+</ResponseField>
+
+<ResponseField name="error.field" type="string">
+  The dot-notation path to the field that caused the validation error. Only present on `422` responses.
+</ResponseField>
+
+<ResponseField name="error.request_id" type="string">
+  Unique identifier for this request. Include this value in any support request so the team can locate the request in server logs.
+</ResponseField>
+
+## Response headers
+
+Every API response includes the following headers:
+
+| Header | Description |
+|---|---|
+| `X-Request-Id` | Unique request identifier for support queries |
+| `X-RateLimit-Limit` | Your plan's per-minute request limit |
+| `X-RateLimit-Remaining` | Requests remaining in the current window |
+| `X-RateLimit-Reset` | Unix timestamp when the rate limit window resets |
+| `X-Idempotent-Replayed` | `true` if this response is a replay of a previously processed idempotency key |

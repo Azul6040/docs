@@ -1,0 +1,233 @@
+---
+title: "Restaurantero Pro error codes and troubleshooting"
+description: "Complete reference for Restaurantero Pro HTTP error codes, internal error codes, common causes, and the steps to resolve each one."
+---
+
+When Restaurantero Pro cannot fulfill a request, it returns a structured JSON error response with an HTTP status code, an internal error code, and a human-readable message. Every error response also includes a `request_id` — include this value when you contact support so the team can locate the exact request in the logs. This page lists every error code, explains why it occurs, and tells you how to fix it.
+
+## Error response format
+
+All error responses follow this structure:
+
+```json
+{
+  "error": {
+    "code": "RPRO_ERR_422",
+    "message": "El campo total_sales_cents es requerido y debe ser un entero positivo.",
+    "field": "data.attributes.total_sales_cents",
+    "received_value": 534.50,
+    "request_id": "req_9f3k2m1x",
+    "docs": "https://docs.restauranteropro.com/errors#RPRO_ERR_422"
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `error.code` | Internal error code for programmatic handling |
+| `error.message` | Human-readable explanation of what went wrong |
+| `error.field` | The specific field that caused the error (present on validation errors) |
+| `error.received_value` | The value your request sent (present on validation errors) |
+| `error.request_id` | Unique identifier for this request — share with support when reporting issues |
+| `error.docs` | Direct link to the relevant documentation section |
+
+---
+
+## Authentication errors
+
+These errors occur when Restaurantero Pro cannot identify or authorize the caller.
+
+<AccordionGroup>
+  <Accordion title="401 — API Key missing or invalid (RPRO_ERR_401)">
+    **When it occurs:** The `X-API-Key` header is absent, empty, or contains a malformed or revoked key.
+
+    **How to fix:**
+    - Confirm the `X-API-Key` header is present on every request.
+    - Verify the key starts with `rpro_live_` (production) or `rpro_test_` (sandbox).
+    - If you suspect the key was revoked, generate a new one in the Restaurantero Pro dashboard under **Ajustes → Integraciones → API Keys**.
+    - Remember: a key is only shown once when created. If lost, you must generate a new one.
+
+    ```http
+    X-API-Key: rpro_live_abc123xyz789...
+    ```
+  </Accordion>
+  <Accordion title="403 — Insufficient permissions (RPRO_ERR_403)">
+    **When it occurs:** The API Key is valid, but the branch's current plan does not include the endpoint you are trying to call.
+
+    **How to fix:**
+    - Check which endpoints are included in the branch's plan (Starter, Growth, Pro, or Enterprise).
+    - If the feature is required, contact Restaurantero Pro to upgrade the plan.
+    - Verify you are not calling an intelligence or live endpoint that requires a higher-tier plan.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Validation errors
+
+These errors occur when your request body is missing required fields, contains invalid values, or is structurally malformed.
+
+<AccordionGroup>
+  <Accordion title="400 — Malformed request (RPRO_ERR_400)">
+    **When it occurs:** The request body is not valid JSON, or the top-level structure does not match the expected `data.type` / `data.attributes` envelope.
+
+    **How to fix:**
+    - Confirm the `Content-Type: application/json` header is present.
+    - Validate your JSON is well-formed before sending.
+    - Ensure the body follows the JSON:API-inspired envelope:
+
+    ```json
+    {
+      "data": {
+        "type": "sales",
+        "attributes": { ... },
+        "meta": { ... }
+      }
+    }
+    ```
+  </Accordion>
+  <Accordion title="404 — Branch not found (RPRO_ERR_404)">
+    **When it occurs:** The `branch_identifier` UUID in the request does not match any branch registered in Restaurantero Pro.
+
+    **How to fix:**
+    - Confirm the `branch_identifier` in your payload or query string matches the UUID shown in the Restaurantero Pro dashboard for the correct branch.
+    - Branch UUIDs are assigned during onboarding and are available in **Ajustes → Integraciones** or from the onboarding team.
+    - Do not confuse the branch UUID with the API Key — they are different values.
+  </Accordion>
+  <Accordion title="409 — Idempotency key already processed (RPRO_ERR_409)">
+    **When it occurs:** You sent a `POST` request with an `X-Idempotency-Key` that was already successfully processed.
+
+    **How to fix:**
+    - This is not an error — it means the data was already saved correctly.
+    - Do not retry. The `409` response confirms the original request succeeded and the data is stored.
+    - If you are seeing unexpected `409` responses, check that your idempotency keys are unique per operation and that you are not reusing keys across different cortes.
+  </Accordion>
+  <Accordion title="422 — Validation error (RPRO_ERR_422)">
+    **When it occurs:** A required field is missing, a value is of the wrong type, or a field fails a business-rule check.
+
+    **How to fix:**
+    - Read the `error.field` value — it tells you the exact JSON path of the failing field (e.g., `data.attributes.total_sales_cents`).
+    - Read the `error.received_value` to understand what was sent versus what is expected.
+    - Fix the field and resend with the same idempotency key.
+
+    **Example response:**
+
+    ```json
+    {
+      "error": {
+        "code": "RPRO_ERR_422",
+        "message": "El campo total_sales_cents es requerido y debe ser un entero positivo.",
+        "field": "data.attributes.total_sales_cents",
+        "received_value": 534.50,
+        "request_id": "req_9f3k2m1x",
+        "docs": "https://docs.restauranteropro.com/errors#RPRO_ERR_422"
+      }
+    }
+    ```
+  </Accordion>
+  <Accordion title="422 — Amount is not an integer (RPRO_ERR_422_CENTS)">
+    **When it occurs:** A `_cents` field received a decimal or floating-point number instead of an integer.
+
+    **How to fix:**
+    - All monetary fields must be integers representing centavos (hundredths of a peso). Never send decimals.
+    - Multiply the peso amount by 100 and cast to `int` before sending:
+
+    ```php
+    // Correct
+    'total_sales_cents' => (int) ($pesos * 100),  // e.g. 534.50 → 53450
+
+    // Wrong — will return RPRO_ERR_422_CENTS
+    'total_sales_cents' => 534.50,
+    ```
+
+    - Watch for RC mutators: `OrderTicketLine` attributes like `unit_price` and `quantity` return values already divided by 100. Multiply them back before sending to Restaurantero Pro.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Rate limiting
+
+<AccordionGroup>
+  <Accordion title="429 — Rate limit exceeded (RPRO_ERR_429)">
+    **When it occurs:** Your integration has sent more requests per minute than your plan allows.
+
+    | Plan | Requests/minute | Requests/month |
+    |---|---|---|
+    | Starter | 100 | 50,000 |
+    | Growth | 500 | 500,000 |
+    | Pro | 2,000 | Unlimited |
+    | Enterprise | Unlimited | Unlimited |
+
+    **How to fix:**
+    - Check the `Retry-After` header in the response — it tells you how many seconds to wait before retrying.
+    - Implement exponential backoff in your retry logic.
+    - Spread the six ingest calls across several seconds rather than sending them simultaneously.
+    - If you consistently hit the limit, consider upgrading your plan.
+
+    ```http
+    HTTP/1.1 429 Too Many Requests
+    Retry-After: 12
+    X-RateLimit-Limit: 100
+    X-RateLimit-Remaining: 0
+    X-RateLimit-Reset: 1747350060
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Server errors
+
+<AccordionGroup>
+  <Accordion title="500 — Internal server error (RPRO_ERR_500)">
+    **When it occurs:** An unexpected error occurred on the Restaurantero Pro servers.
+
+    **How to fix:**
+    - Note the `request_id` from the error response.
+    - Check the service status at `https://status.restauranteropro.com`.
+    - If the issue persists for more than a few minutes, email `dev@restauranteropro.com` with the `request_id` and the endpoint you were calling.
+    - Retry the request after a short delay — most `500` errors are transient.
+  </Accordion>
+  <Accordion title="503 — Service temporarily unavailable (RPRO_ERR_503)">
+    **When it occurs:** Restaurantero Pro is undergoing maintenance or experiencing high load.
+
+    **How to fix:**
+    - Check `https://status.restauranteropro.com` for an active incident or maintenance window.
+    - Retry with exponential backoff. Do not flood the service with retries during an outage.
+    - Use the idempotency key system — once the service recovers, you can safely resend the same requests without duplicating data.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Full error catalog
+
+| HTTP code | Internal code | Cause | Resolution |
+|---|---|---|---|
+| `400` | `RPRO_ERR_400` | Malformed JSON or missing envelope structure | Validate JSON structure; ensure `data.type` and `data.attributes` are present |
+| `401` | `RPRO_ERR_401` | `X-API-Key` missing, malformed, or revoked | Verify the header and regenerate the key if needed |
+| `403` | `RPRO_ERR_403` | Valid key but plan does not include this endpoint | Check the plan or contact support to upgrade |
+| `404` | `RPRO_ERR_404` | `branch_identifier` UUID not found | Verify the UUID against the dashboard |
+| `409` | `RPRO_ERR_409` | Idempotency key already processed successfully | Do not retry — data is already saved |
+| `422` | `RPRO_ERR_422` | Required field missing or invalid value | Fix the field identified in `error.field` |
+| `422` | `RPRO_ERR_422_CENTS` | Decimal value sent in a `_cents` field | Multiply by 100 and cast to `int` |
+| `429` | `RPRO_ERR_429` | Rate limit exceeded | Wait `Retry-After` seconds; implement backoff |
+| `500` | `RPRO_ERR_500` | Unexpected server-side error | Retry after a delay; report with `request_id` |
+| `503` | `RPRO_ERR_503` | Maintenance or overload | Check status page; retry with backoff |
+
+---
+
+## Checking request IDs
+
+Every response — success or error — includes an `X-Request-Id` header. Save this value in your logs whenever a request fails. When you report a problem to support, the team can use the request ID to look up the exact request, payload, and internal processing trace.
+
+```http
+HTTP/1.1 422 Unprocessable Entity
+X-Request-Id: req_9f3k2m1x
+Content-Type: application/json
+```
+
+<Tip>
+Log the `X-Request-Id` header for every ingest call your POS makes, not just the ones that fail. If a data discrepancy appears days later, the request ID lets you trace exactly what was sent.
+</Tip>

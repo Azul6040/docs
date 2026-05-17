@@ -1,0 +1,224 @@
+---
+title: "RestauranteroProService: PHP integration snippet"
+description: "Copy-paste ready PHP service class for sending Corte Z data from Restaurant Controller to Restaurantero Pro, with automatic retry logic."
+---
+
+The `RestauranteroProService` class handles everything your integration needs at Corte Z time: building payloads for each of the six ingestion endpoints, sending them in the correct order, retrying on network failures, and logging every outcome. Drop the class into `app/Services/`, configure two environment variables, and call `sendZOut()` from your `CashRegisterOpeningController`.
+
+## Configuration
+
+Before using the service, add the config file and the corresponding environment variables.
+
+<Steps>
+  <Step title="Create the config file">
+    Create `config/restaurantero.php` in your RC project:
+
+    ```php
+    <?php
+
+    return [
+        'base_url'           => env('RESTAURANTERO_BASE_URL', 'https://api.restauranteropro.com/api/v1'),
+        'api_key'            => env('RESTAURANTERO_API_KEY'),
+        'branch_identifier'  => env('RESTAURANTERO_BRANCH_IDENTIFIER'),
+        'enabled'            => env('RESTAURANTERO_ENABLED', true),
+    ];
+    ```
+  </Step>
+
+  <Step title="Set environment variables">
+    Add the following to your `.env` file. Use `rpro_test_xxx` keys and the sandbox URL during development.
+
+    ```bash
+    RESTAURANTERO_BASE_URL=https://api.restauranteropro.com/api/v1
+    RESTAURANTERO_API_KEY=rpro_live_xxxxxxxxxxxxxxxxxxxxxxxx
+    RESTAURANTERO_BRANCH_IDENTIFIER=b1c2d3e4-f5a6-7890-abcd-ef1234567890
+    RESTAURANTERO_ENABLED=true
+    ```
+
+    <Tip>During development and testing, point `RESTAURANTERO_BASE_URL` to `https://sandbox.restauranteropro.com/api/v1` and use a `rpro_test_xxx` key. Switch both values to production when you go live.</Tip>
+  </Step>
+</Steps>
+
+---
+
+## The RestauranteroProService class
+
+Copy the full class into `app/Services/RestauranteroProService.php`:
+
+```php
+<?php
+
+namespace App\Services;
+
+use App\Models\CashRegisterOpening;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+
+class RestauranteroProService
+{
+    private string $baseUrl;
+    private string $apiKey;
+    private string $branchIdentifier;
+
+    public function __construct()
+    {
+        $this->baseUrl          = config('restaurantero.base_url', 'https://api.restauranteropro.com/api/v1');
+        $this->apiKey           = config('restaurantero.api_key');
+        $this->branchIdentifier = config('restaurantero.branch_identifier');
+    }
+
+    /**
+     * Envía el Corte Z completo a Restaurantero Pro.
+     * Llama a este método justo después de que RC procesa el cierre del día.
+     */
+    public function sendZOut(CashRegisterOpening $closing): void
+    {
+        $closingId = $closing->identifier;
+
+        // 1. Líneas de orden (primero)
+        $this->post('/ingest/orders', $this->buildOrdersPayload($closing), $closingId . '-orders');
+
+        // 2. Descuentos
+        $this->post('/ingest/discounts', $this->buildDiscountsPayload($closing), $closingId . '-discounts');
+
+        // 3. Cancelaciones
+        $this->post('/ingest/cancellations', $this->buildCancellationsPayload($closing), $closingId . '-cancellations');
+
+        // 4. Pagos
+        $this->post('/ingest/payments', $this->buildPaymentsPayload($closing), $closingId . '-payments');
+
+        // 5. Resumen de ventas
+        $this->post('/ingest/sales', $this->buildSalesPayload($closing), $closingId . '-sales');
+
+        // 6. El corte en sí — este dispara el procesamiento en RP
+        $this->post('/ingest/cash-register', $this->buildCashRegisterPayload($closing), $closingId);
+    }
+
+    /**
+     * Construye el payload del Corte Z.
+     */
+    private function buildCashRegisterPayload(CashRegisterOpening $closing): array
+    {
+        return [
+            'data' => [
+                'type' => 'cash-register',
+                'attributes' => [
+                    'branch_identifier' => $this->branchIdentifier,
+                    'closing_type'      => 'zout',
+                    'start_at'          => $closing->start_at->toIso8601String(),
+                    'end_at'            => $closing->end_at->toIso8601String(),
+                    'status'            => 'completed',
+                    'summaries'         => $closing->summaries->map(fn($s) => [
+                        'type'         => $s->type,
+                        'name'         => $s->name,
+                        'amount_cents' => (int) ($s->amount * 100),
+                    ])->toArray(),
+                ],
+                'meta' => [
+                    'pos_name'    => 'restaurant_controller',
+                    'pos_version' => config('app.version', '1.0.0'),
+                    'pos_variant' => 'full_dining',
+                    'sent_at'     => now()->toIso8601String(),
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * HTTP helper con retry automático (3 intentos).
+     */
+    private function post(string $endpoint, array $payload, string $idempotencyKey): void
+    {
+        $attempts = 0;
+        $maxAttempts = 3;
+        $delays = [0, 5, 30]; // segundos entre intentos
+
+        while ($attempts < $maxAttempts) {
+            try {
+                $response = Http::withHeaders([
+                    'X-API-Key'           => $this->apiKey,
+                    'X-Idempotency-Key'   => $idempotencyKey,
+                    'Content-Type'        => 'application/json',
+                ])->timeout(15)->post($this->baseUrl . $endpoint, $payload);
+
+                if ($response->successful()) {
+                    Log::info("RestauranteroPro: {$endpoint} enviado correctamente", [
+                        'idempotency_key' => $idempotencyKey,
+                        'status'          => $response->status(),
+                    ]);
+                    return; // éxito — salir del loop
+                }
+
+                Log::warning("RestauranteroPro: {$endpoint} error HTTP {$response->status()}", [
+                    'response' => $response->json(),
+                ]);
+
+            } catch (\Exception $e) {
+                Log::error("RestauranteroPro: {$endpoint} excepción", [
+                    'error' => $e->getMessage(),
+                    'attempt' => $attempts + 1,
+                ]);
+            }
+
+            $attempts++;
+            if ($attempts < $maxAttempts) {
+                sleep($delays[$attempts]);
+            }
+        }
+
+        // Si llegó aquí, falló 3 veces — guarda para reintentar mañana
+        Log::critical("RestauranteroPro: {$endpoint} falló 3 intentos — idempotency_key: {$idempotencyKey}");
+    }
+}
+```
+
+---
+
+## How to call sendZOut()
+
+Call `sendZOut()` from `CashRegisterOpeningController.php` immediately after RC finishes its own internal close process, but only when the closing type is `zout`:
+
+```php
+// In CashRegisterOpeningController.php
+$isStoredZOut = $closingCategoryType === 'cash_register.closings.zout';
+
+if ($isStoredZOut) {
+    // RC's own close logic runs first...
+
+    // Then dispatch to Restaurantero Pro
+    app(RestauranteroProService::class)->sendZOut($cashRegisterOpening);
+}
+```
+
+<Note>For Corte X (`xout`), you only need to send `POST /ingest/cash-register` with `closing_type: "xout"`. The five other endpoints (orders, discounts, cancellations, payments, sales) are not required for Corte X because it does not trigger cube regeneration.</Note>
+
+---
+
+## Retry logic
+
+The `post()` helper retries each endpoint up to three times before giving up:
+
+| Attempt | Delay |
+|---|---|
+| 1 | Immediate |
+| 2 | 5 seconds |
+| 3 | 30 seconds |
+
+If all three attempts fail, the method logs a `critical` entry with the idempotency key. Because each request uses a stable idempotency key (`{closing.identifier}-{endpoint}`), you can safely replay any failed requests the next day — Restaurantero Pro will deduplicate them automatically and return a `200` response with the previously processed result.
+
+<Warning>If a request returns `409 RPRO_ERR_409`, the data was already processed successfully on a previous attempt. Do not retry — the record is already saved. The `X-Idempotent-Replayed: true` response header confirms when a response is a replay.</Warning>
+
+---
+
+## Logging behavior
+
+Every request outcome is logged through Laravel's `Log` facade:
+
+| Outcome | Log level | What is recorded |
+|---|---|---|
+| Successful `2xx` response | `info` | Endpoint, idempotency key, HTTP status |
+| Non-`2xx` HTTP response | `warning` | Endpoint, HTTP status, response body |
+| Network exception | `error` | Endpoint, exception message, attempt number |
+| All 3 attempts exhausted | `critical` | Endpoint, idempotency key |
+
+Check `storage/logs/laravel.log` (or your configured log channel) to verify each Corte Z was sent successfully. The `critical` level entries are the ones that need follow-up — they indicate data that did not reach Restaurantero Pro and should be retried.

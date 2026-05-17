@@ -1,0 +1,131 @@
+---
+title: "Idempotent ingestion with X-Idempotency-Key"
+description: "All POST ingestion endpoints require an X-Idempotency-Key header. Learn how idempotency prevents duplicate data when retrying failed requests."
+---
+
+Network failures happen — a timeout, a dropped connection, or a server restart can cause your POS to retry a request that already reached Restaurantero Pro. Without idempotency, each retry would create duplicate records, corrupting the P&L, cash reconciliation, and every other output that depends on daily totals. The `X-Idempotency-Key` header is the mechanism that prevents this.
+
+## Why idempotency is required
+
+Every `POST /api/v1/ingest/*` endpoint **requires** an `X-Idempotency-Key` header. If you omit it, the request is rejected with a `400` error. This is intentional — Restaurantero Pro enforces idempotency at the transport layer so that your retry logic is always safe to implement.
+
+When Restaurantero Pro receives a request with an idempotency key it has already processed, it returns the original response without processing the data again. Your POS receives a `200` response with the `X-Idempotent-Replayed: true` header set to signal that this was a replay, not new data.
+
+## How to generate idempotency keys
+
+Use UUID v4. If you are using Restaurant Controller, the `CashRegisterOpening` model already has an `identifier` field that is a UUID v4 — use it directly as the key for the cash-register endpoint:
+
+```php
+// The CashRegisterOpening already has a UUID identifier
+$idempotencyKey = $cashRegisterOpening->identifier;
+// Example: "550e8400-e29b-41d4-a716-446655440000"
+```
+
+Store the key locally alongside the Corte Z record before making the first request, not after. This ensures you always have the key available for retries, even if your process crashes between the request and the response.
+
+## The suffix pattern for a full Corte Z
+
+A single Corte Z triggers six separate POST requests. Each endpoint must receive its own unique idempotency key — but all six keys must be deterministic from the same Corte Z so that retrying the entire sequence is safe. Use the `CashRegisterOpening` identifier as a base and append a suffix per endpoint:
+
+```php
+$closingId = $cashRegisterOpening->identifier;
+// Example: "550e8400-e29b-41d4-a716-446655440000"
+
+// Each endpoint gets its own idempotency key:
+'X-Idempotency-Key' => $closingId,                       // cash-register
+'X-Idempotency-Key' => $closingId . '-orders',           // orders
+'X-Idempotency-Key' => $closingId . '-payments',         // payments
+'X-Idempotency-Key' => $closingId . '-discounts',        // discounts
+'X-Idempotency-Key' => $closingId . '-cancellations',    // cancellations
+'X-Idempotency-Key' => $closingId . '-sales',            // sales
+```
+
+This pattern means you can safely retry the full sequence from the beginning without worrying about which individual requests succeeded — any already-processed endpoint will respond with a replay, and unprocessed endpoints will be executed normally.
+
+## How replay works — the 409 response
+
+When an idempotency key is already stored and the previous request completed successfully, Restaurantero Pro returns `200` with `X-Idempotent-Replayed: true`. No new data is written.
+
+If the previous request is still processing (the first request has not yet completed), the API returns `409 Conflict`:
+
+```json
+{
+  "error": {
+    "code": "RPRO_ERR_409",
+    "message": "Idempotency key ya procesada.",
+    "request_id": "req_abc123"
+  }
+}
+```
+
+A `409` means the data is already saved — **do not retry**. Log the idempotency key and move on. Your data is safe.
+
+<Warning>
+Never generate a new idempotency key to work around a `409`. The `409` is telling you the data already exists. Retrying with a new key would create a duplicate.
+</Warning>
+
+## Recommended retry policy
+
+Implement exponential backoff with a finite number of retries. If all retries fail, persist the failed request and its idempotency key so you can re-attempt it the next time your POS starts:
+
+```
+Attempt 1: Immediate
+Attempt 2: 5 seconds later
+Attempt 3: 30 seconds later
+Attempt 4: 5 minutes later
+Attempt 5: Mark as pending — retry when POS restarts the next day
+```
+
+Here is the retry loop used in the reference PHP service:
+
+```php
+private function post(string $endpoint, array $payload, string $idempotencyKey): void
+{
+    $attempts   = 0;
+    $maxAttempts = 3;
+    $delays     = [0, 5, 30]; // seconds between attempts
+
+    while ($attempts < $maxAttempts) {
+        try {
+            $response = Http::withHeaders([
+                'X-API-Key'         => $this->apiKey,
+                'X-Idempotency-Key' => $idempotencyKey,
+                'Content-Type'      => 'application/json',
+            ])->timeout(15)->post($this->baseUrl . $endpoint, $payload);
+
+            if ($response->successful()) {
+                Log::info("RestauranteroPro: {$endpoint} sent", [
+                    'idempotency_key' => $idempotencyKey,
+                    'status'          => $response->status(),
+                    'replayed'        => $response->header('X-Idempotent-Replayed') === 'true',
+                ]);
+                return; // success — exit loop
+            }
+
+            Log::warning("RestauranteroPro: {$endpoint} HTTP error {$response->status()}", [
+                'response' => $response->json(),
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error("RestauranteroPro: {$endpoint} exception", [
+                'error'   => $e->getMessage(),
+                'attempt' => $attempts + 1,
+            ]);
+        }
+
+        $attempts++;
+        if ($attempts < $maxAttempts) {
+            sleep($delays[$attempts]);
+        }
+    }
+
+    // All attempts failed — persist for next-day retry
+    Log::critical("RestauranteroPro: {$endpoint} failed after {$maxAttempts} attempts", [
+        'idempotency_key' => $idempotencyKey,
+    ]);
+}
+```
+
+<Tip>
+Log every request with its idempotency key, HTTP status, and whether it was replayed. This log becomes your audit trail for debugging data discrepancies and for support queries.
+</Tip>

@@ -1,0 +1,343 @@
+---
+title: "GET /api/v1/intelligence/pnl"
+sidebarTitle: "P&L Statement"
+description: "Retrieve the full income statement for a period: revenue, COGS, gross profit, operating expenses, EBITDA, and net profit with benchmark statuses."
+---
+
+The P&L endpoint returns the complete income statement for the selected period, calculated by combining the sales data your POS pushes with purchases and payroll entered directly in the Restaurantero Pro dashboard. Each section carries a benchmark `status` field so you can surface green/yellow/red indicators directly in your UI without any additional computation.
+
+## Request
+
+```http
+GET /api/v1/intelligence/pnl
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+## Query parameters
+
+<ParamField query="branch_identifier" type="string" required>
+  UUID of the branch to query.
+</ParamField>
+
+<ParamField query="date_from" type="string" required>
+  Start of the period (`YYYY-MM-DD`). Omit if using `period`.
+</ParamField>
+
+<ParamField query="date_to" type="string" required>
+  End of the period (`YYYY-MM-DD`). Omit if using `period`.
+</ParamField>
+
+<ParamField query="period" type="string">
+  Period shortcut: `today`, `yesterday`, `week`, or `month`.
+</ParamField>
+
+## Response fields
+
+### `ventas` — Revenue
+
+<ResponseField name="data.attributes.ventas.food_sales_cents" type="integer">
+  Net food sales for the period, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.ventas.beverage_sales_cents" type="integer">
+  Net beverage sales for the period, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.ventas.bar_sales_cents" type="integer">
+  Net bar (alcoholic beverage) sales, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.ventas.total_net_sales_cents" type="integer">
+  Total net sales across all categories, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.ventas.food_sales_pct" type="number">
+  Food sales as a percentage of total net sales.
+</ResponseField>
+
+<ResponseField name="data.attributes.ventas.beverage_sales_pct" type="number">
+  Beverage sales as a percentage of total net sales.
+</ResponseField>
+
+### `costo_de_ventas` — Cost of goods sold
+
+<ResponseField name="data.attributes.costo_de_ventas.food_cost_cents" type="integer">
+  Cost of food sold, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.costo_de_ventas.food_cost_pct" type="number">
+  Food cost as a percentage of food sales.
+</ResponseField>
+
+<ResponseField name="data.attributes.costo_de_ventas.food_cost_status" type="string">
+  Benchmark status: `green`, `yellow`, or `red`.
+</ResponseField>
+
+<ResponseField name="data.attributes.costo_de_ventas.beverage_cost_cents" type="integer">
+  Cost of beverages sold, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.costo_de_ventas.beverage_cost_pct" type="number">
+  Beverage cost as a percentage of beverage sales.
+</ResponseField>
+
+<ResponseField name="data.attributes.costo_de_ventas.beverage_cost_status" type="string">
+  Benchmark status: `green`, `yellow`, or `red`.
+</ResponseField>
+
+<ResponseField name="data.attributes.costo_de_ventas.total_cogs_cents" type="integer">
+  Total cost of goods sold, in centavos.
+</ResponseField>
+
+### `utilidad_bruta` — Gross profit
+
+<ResponseField name="data.attributes.utilidad_bruta.gross_profit_cents" type="integer">
+  Gross profit (net sales minus COGS), in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.utilidad_bruta.gross_margin_pct" type="number">
+  Gross margin as a percentage of net sales.
+</ResponseField>
+
+### `gastos_operativos` — Operating expenses
+
+<ResponseField name="data.attributes.gastos_operativos.labor_cost_cents" type="integer">
+  Total payroll cost for the period, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.gastos_operativos.labor_cost_pct" type="number">
+  Labor cost as a percentage of net sales.
+</ResponseField>
+
+<ResponseField name="data.attributes.gastos_operativos.labor_cost_status" type="string">
+  Benchmark status: `green`, `yellow`, or `red`.
+</ResponseField>
+
+<ResponseField name="data.attributes.gastos_operativos.prime_cost_cents" type="integer">
+  Prime cost (COGS + labor), in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.gastos_operativos.prime_cost_pct" type="number">
+  Prime cost as a percentage of net sales.
+</ResponseField>
+
+<ResponseField name="data.attributes.gastos_operativos.prime_cost_status" type="string">
+  Benchmark status: `green`, `yellow`, or `red`.
+</ResponseField>
+
+<ResponseField name="data.attributes.gastos_operativos.rent_cents" type="integer">
+  Rent expense, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.gastos_operativos.utilities_cents" type="integer">
+  Utilities expense, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.gastos_operativos.maintenance_cents" type="integer">
+  Maintenance expense, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.gastos_operativos.marketing_cents" type="integer">
+  Marketing expense, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.gastos_operativos.admin_cents" type="integer">
+  Administrative expense, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.gastos_operativos.total_opex_cents" type="integer">
+  Total operating expenses (labor + rent + utilities + all other opex), in centavos.
+</ResponseField>
+
+### `ebitda`
+
+<ResponseField name="data.attributes.ebitda.ebitda_cents" type="integer">
+  EBITDA in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.ebitda.ebitda_pct" type="number">
+  EBITDA as a percentage of net sales.
+</ResponseField>
+
+<ResponseField name="data.attributes.ebitda.ebitda_status" type="string">
+  Benchmark status: `green`, `yellow`, or `red`.
+</ResponseField>
+
+### `utilidad_neta` — Net profit
+
+<ResponseField name="data.attributes.utilidad_neta.net_profit_cents" type="integer">
+  Net profit after all expenses, in centavos.
+</ResponseField>
+
+<ResponseField name="data.attributes.utilidad_neta.net_profit_pct" type="number">
+  Net profit margin as a percentage of net sales.
+</ResponseField>
+
+<ResponseField name="data.attributes.utilidad_neta.net_profit_status" type="string">
+  Benchmark status: `green`, `yellow`, or `red`.
+</ResponseField>
+
+### `meta.benchmarks`
+
+The `meta` object includes the benchmark thresholds used to calculate each status field.
+
+```json
+"benchmarks": {
+  "food_cost":   { "green": "< 30%", "yellow": "30-38%", "red": "> 38%" },
+  "labor_cost":  { "green": "< 30%", "yellow": "30-35%", "red": "> 35%" },
+  "prime_cost":  { "green": "< 60%", "yellow": "60-65%", "red": "> 65%" },
+  "ebitda":      { "green": "> 20%", "yellow": "10-20%", "red": "< 10%" }
+}
+```
+
+## Example
+
+```http
+GET /api/v1/intelligence/pnl?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890&date_from=2026-05-01&date_to=2026-05-15
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+```json
+{
+  "data": {
+    "type": "pnl_summary",
+    "attributes": {
+      "ventas": {
+        "food_sales_cents": 5648741,
+        "beverage_sales_cents": 2585759,
+        "bar_sales_cents": 0,
+        "total_net_sales_cents": 8234500,
+        "food_sales_pct": 68.6,
+        "beverage_sales_pct": 31.4
+      },
+      "costo_de_ventas": {
+        "food_cost_cents": 1694622,
+        "food_cost_pct": 30.0,
+        "food_cost_status": "yellow",
+        "beverage_cost_cents": 517152,
+        "beverage_cost_pct": 20.0,
+        "beverage_cost_status": "green",
+        "bar_cost_cents": 0,
+        "bar_cost_pct": 0.0,
+        "total_cogs_cents": 2211774
+      },
+      "utilidad_bruta": {
+        "gross_profit_cents": 6022726,
+        "gross_margin_pct": 73.1
+      },
+      "gastos_operativos": {
+        "labor_cost_cents": 2470350,
+        "labor_cost_pct": 30.0,
+        "labor_cost_status": "yellow",
+        "prime_cost_cents": 4682124,
+        "prime_cost_pct": 56.9,
+        "prime_cost_status": "green",
+        "rent_cents": 900000,
+        "utilities_cents": 370000,
+        "maintenance_cents": 164000,
+        "marketing_cents": 240000,
+        "admin_cents": 136000,
+        "other_expenses_cents": 136000,
+        "total_opex_cents": 4416350
+      },
+      "ebitda": {
+        "ebitda_cents": 1606376,
+        "ebitda_pct": 19.5,
+        "ebitda_status": "yellow"
+      },
+      "utilidad_neta": {
+        "net_profit_cents": 1446376,
+        "net_profit_pct": 17.6,
+        "net_profit_status": "green"
+      }
+    },
+    "meta": {
+      "period": { "from": "2026-05-01", "to": "2026-05-15" },
+      "benchmarks": {
+        "food_cost":  { "green": "< 30%", "yellow": "30-38%", "red": "> 38%" },
+        "labor_cost": { "green": "< 30%", "yellow": "30-35%", "red": "> 35%" },
+        "prime_cost": { "green": "< 60%", "yellow": "60-65%", "red": "> 65%" },
+        "ebitda":     { "green": "> 20%", "yellow": "10-20%", "red": "< 10%" }
+      }
+    }
+  }
+}
+```
+
+---
+
+## Cash flow — `GET /api/v1/intelligence/cash-flow`
+
+The Cash Flow endpoint is the digital cash ledger for the restaurant. It shows every cash inflow and outflow for the period — including cash sales, deposits received, purchases paid in cash, tips paid to servers, and withholdings — alongside the opening balance, closing balance, and a daily breakdown with variance status.
+
+<Note>
+  This endpoint tracks **cash movement only**. Card and transfer sales do not appear in inflows or outflows because they do not move physical cash.
+</Note>
+
+### Request
+
+```http
+GET /api/v1/intelligence/cash-flow?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890&date_from=2026-05-01&date_to=2026-05-15
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+### Response
+
+```json
+{
+  "data": {
+    "type": "cash_flow",
+    "attributes": {
+      "period_summary": {
+        "opening_balance_cents": 500000,
+        "total_inflows_cents": 8734500,
+        "total_outflows_cents": 7284200,
+        "closing_balance_cents": 1950300,
+        "net_cash_cents": 1450300
+      },
+      "inflows": {
+        "cash_sales_cents": 1850000,
+        "deposits_received_cents": 100000,
+        "other_income_cents": 0,
+        "tips_received_cents": 423000
+      },
+      "outflows": {
+        "cash_purchases_cents": 485000,
+        "cash_expenses_cents": 342000,
+        "tips_paid_to_waiters_cents": 380000,
+        "withholding_cents": 75000,
+        "other_cash_out_cents": 0
+      },
+      "daily_entries": [
+        {
+          "date": "2026-05-15",
+          "opening_balance_cents": 500000,
+          "inflows_cents": 534550,
+          "outflows_cents": 67000,
+          "closing_balance_cents": 967550,
+          "variance_cents": 314,
+          "variance_pct": 0.06,
+          "variance_status": "green"
+        }
+      ],
+      "alerts": [
+        {
+          "date": "2026-05-08",
+          "type": "variance_high",
+          "message": "Faltante de caja de $850 MXN detectado",
+          "severity": "yellow"
+        }
+      ]
+    },
+    "meta": {
+      "period": { "from": "2026-05-01", "to": "2026-05-15" },
+      "benchmark": {
+        "variance_pct_threshold": 1.0,
+        "variance_status": "green"
+      }
+    }
+  }
+}
+```
+
+Each entry in `daily_entries` includes a `variance_status` field that flags days where the actual cash count differed significantly from the expected balance. A `variance_pct` below 1% is green; 1–3% is yellow; above 3% is red.

@@ -1,0 +1,256 @@
+---
+title: "POST /api/v1/ingest/cash-register"
+sidebarTitle: "Cash Register Cut"
+description: "Submit a cash register cut (Corte X or Z) to Restaurantero Pro. The Corte Z triggers async processing of all daily intelligence cubes."
+---
+
+Use this endpoint to submit a cash register cut to Restaurantero Pro. You can send either a Corte X (`xout`), which is an informational mid-shift close, or a Corte Z (`zout`), which marks the end of the day and triggers the full async regeneration of all intelligence cubes — P&L, food cost, KPIs, and alerts.
+
+<Note>
+  Send this endpoint **last** in the ingestion sequence. The Corte Z is the trigger that kicks off processing. Make sure you've already submitted orders, discounts, cancellations, payments, and sales before calling this endpoint.
+</Note>
+
+## Endpoint
+
+```http
+POST https://api.restauranteropro.com/api/v1/ingest/cash-register
+```
+
+## Required headers
+
+<ParamField header="X-API-Key" type="string" required>
+  Your branch API key. Format: `rpro_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` for production, `rpro_test_xxx` for sandbox.
+</ParamField>
+
+<ParamField header="X-Idempotency-Key" type="string" required>
+  A UUID v4 unique to this cash register cut. Use the `identifier` of the `CashRegisterOpening` record from your POS. If a network failure causes you to retry, reuse the same key — Restaurantero Pro will return the original response without reprocessing.
+</ParamField>
+
+<ParamField header="Content-Type" type="string" required>
+  Must be `application/json`.
+</ParamField>
+
+## Request body
+
+<ParamField body="data" type="object" required>
+  Top-level wrapper following JSON:API structure.
+
+  <Expandable title="properties" defaultOpen>
+    <ParamField body="data.type" type="string" required>
+      Always `"cash-register"`.
+    </ParamField>
+
+    <ParamField body="data.attributes" type="object" required>
+      <Expandable title="attributes">
+        <ParamField body="data.attributes.branch_identifier" type="string" required>
+          UUID of the branch sending the cut. Must match the branch associated with your API key.
+        </ParamField>
+
+        <ParamField body="data.attributes.closing_type" type="string" required>
+          Type of cut. Accepted values:
+
+          | Value | Description |
+          |-------|-------------|
+          | `xout` | Corte X — mid-shift informational close. Does not trigger cube regeneration. |
+          | `zout` | Corte Z — end-of-day close. Triggers full async processing of all intelligence cubes. |
+        </ParamField>
+
+        <ParamField body="data.attributes.start_at" type="string" required>
+          ISO 8601 timestamp with timezone for when the shift started. Example: `"2026-05-15T07:00:00-07:00"`.
+        </ParamField>
+
+        <ParamField body="data.attributes.end_at" type="string" required>
+          ISO 8601 timestamp with timezone for when the shift ended.
+        </ParamField>
+
+        <ParamField body="data.attributes.status" type="string" required>
+          Status of the cut. Use `"completed"` for a finished cut.
+        </ParamField>
+
+        <ParamField body="data.attributes.summaries" type="object[]" required>
+          Array of financial summary line items for the cut. Each object has the following fields:
+
+          <Expandable title="summary object fields">
+            <ParamField body="type" type="string" required>
+              Summary category. See the table below for all valid values.
+            </ParamField>
+
+            <ParamField body="name" type="string" required>
+              Display name for this summary line (e.g., `"Venta Efectivo"`).
+            </ParamField>
+
+            <ParamField body="amount_cents" type="integer" required>
+              Amount in **centavos** (integer). Never send decimals. Example: `$1,250.00 MXN` → `125000`.
+            </ParamField>
+          </Expandable>
+        </ParamField>
+      </Expandable>
+    </ParamField>
+
+    <ParamField body="data.meta" type="object">
+      <Expandable title="meta fields">
+        <ParamField body="data.meta.pos_name" type="string">
+          Name of the POS sending the data (e.g., `"restaurant_controller"`).
+        </ParamField>
+
+        <ParamField body="data.meta.pos_version" type="string">
+          Version of the POS software.
+        </ParamField>
+
+        <ParamField body="data.meta.pos_variant" type="string">
+          POS variant, if applicable (e.g., `"full_dining"` or `"express"`).
+        </ParamField>
+
+        <ParamField body="data.meta.sent_at" type="string">
+          ISO 8601 timestamp of when the request was sent.
+        </ParamField>
+
+        <ParamField body="data.meta.cashier_name" type="string">
+          Name of the cashier who closed the cut.
+        </ParamField>
+
+        <ParamField body="data.meta.cash_register_name" type="string">
+          Identifier of the cash register (e.g., `"CAJA 1"`).
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Summary types
+
+The `summaries` array accepts any combination of the following `type` values:
+
+| type | Description |
+|------|-------------|
+| `cash_sales` | Total cash sales |
+| `card_sales` | Total card sales (credit + debit combined) |
+| `card_credit_sales` | Credit card sales (optional breakdown) |
+| `card_debit_sales` | Debit card sales (optional breakdown) |
+| `transfer_sales` | Bank transfer / SPEI sales |
+| `delivery_sales` | Delivery platform sales (Rappi, Uber Eats, DiDi Food) |
+| `voucher_sales` | Despensa voucher sales |
+| `tips_received` | Tips collected from customers |
+| `tips_paid_to_waiter` | Tips paid out to waitstaff |
+| `withholding` | Withheld amount (e.g., moche) |
+| `deposits` | Deposits added to the cash fund |
+| `cash_variance` | Difference between expected and actual cash — positive = overage, negative = shortage |
+
+## Request example
+
+```json
+{
+  "data": {
+    "type": "cash-register",
+    "attributes": {
+      "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+      "closing_type": "zout",
+      "start_at": "2026-05-15T07:00:00-07:00",
+      "end_at": "2026-05-15T23:45:00-07:00",
+      "status": "completed",
+      "summaries": [
+        {
+          "type": "cash_sales",
+          "name": "Venta Efectivo",
+          "amount_cents": 125000
+        },
+        {
+          "type": "card_sales",
+          "name": "Venta Tarjeta",
+          "amount_cents": 409550
+        },
+        {
+          "type": "transfer_sales",
+          "name": "Transferencia",
+          "amount_cents": 0
+        },
+        {
+          "type": "tips_received",
+          "name": "Propinas Cobradas",
+          "amount_cents": 30000
+        },
+        {
+          "type": "tips_paid_to_waiter",
+          "name": "Propinas Pagadas a Mesero",
+          "amount_cents": 22000
+        },
+        {
+          "type": "withholding",
+          "name": "Retención (Moche)",
+          "amount_cents": 5000
+        },
+        {
+          "type": "deposits",
+          "name": "Depósitos a Caja",
+          "amount_cents": 10000
+        },
+        {
+          "type": "cash_variance",
+          "name": "Sobrante / Faltante",
+          "amount_cents": 314
+        }
+      ]
+    },
+    "meta": {
+      "pos_name": "restaurant_controller",
+      "pos_version": "3.2.1",
+      "pos_variant": "full_dining",
+      "sent_at": "2026-05-15T23:46:00Z",
+      "cashier_name": "Ana García",
+      "cash_register_name": "CAJA 1"
+    }
+  }
+}
+```
+
+## Response
+
+### 202 Accepted
+
+The request was received and queued for processing. Processing happens asynchronously.
+
+<ResponseField name="data" type="object">
+  <Expandable title="properties" defaultOpen>
+    <ResponseField name="data.type" type="string">
+      Always `"cash-register-ingest"`.
+    </ResponseField>
+
+    <ResponseField name="data.id" type="string">
+      UUID assigned to this ingestion job.
+    </ResponseField>
+
+    <ResponseField name="data.attributes.queued" type="boolean">
+      `true` when the cut has been accepted and queued.
+    </ResponseField>
+
+    <ResponseField name="data.attributes.closing_type" type="string">
+      The closing type received (`"xout"` or `"zout"`).
+    </ResponseField>
+
+    <ResponseField name="data.attributes.message" type="string">
+      Human-readable confirmation message.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```json
+{
+  "data": {
+    "type": "cash-register-ingest",
+    "id": "ingest_uuid",
+    "attributes": {
+      "queued": true,
+      "closing_type": "zout",
+      "message": "Corte Z recibido. Los cubos del día se regenerarán en los próximos segundos."
+    }
+  }
+}
+```
+
+## Async processing
+
+The `202 Accepted` response means the data was accepted — not that processing is complete. After a Corte Z, Restaurantero Pro regenerates all daily intelligence cubes (P&L, food cost, KPIs, menu engineering, alerts) asynchronously. This typically completes within a few seconds.
+
+<Tip>
+  Subscribe to the `snapshot.completed` webhook event to know exactly when the day's intelligence data is ready to query, without polling.
+</Tip>

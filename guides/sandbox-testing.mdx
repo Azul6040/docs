@@ -1,0 +1,173 @@
+---
+title: "Test your integration in the Restaurantero Pro sandbox"
+description: "Use the Restaurantero Pro sandbox to develop and verify your POS integration without affecting real restaurant data or incurring any charges."
+---
+
+Restaurantero Pro provides a dedicated sandbox environment where you can send Corte Z data, trigger cube regeneration, and verify the full integration flow without touching real restaurant data or incurring any charges. All ingestion and intelligence endpoints are available in sandbox with the same request and response shapes as production. Use sandbox for all development and testing before activating a branch in production.
+
+## Sandbox vs production
+
+| | Sandbox | Production |
+|---|---|---|
+| Base URL | `https://sandbox.restauranteropro.com/api/v1` | `https://api.restauranteropro.com/api/v1` |
+| API Key prefix | `rpro_test_xxx` | `rpro_live_xxx` |
+| Data isolation | Completely separate from production | Real restaurant data |
+| Charges | None | Per plan |
+| Dev Portal logs | Yes — full request/response history | Yes |
+| Cube regeneration | Yes — same async flow | Yes |
+| Webhooks | Yes — fires to your registered test endpoint | Yes |
+
+<Warning>Never use a production (`rpro_live_xxx`) key against the sandbox URL, or a test key against the production URL. Keys are environment-scoped and will return `401 Unauthorized` if used against the wrong base URL.</Warning>
+
+---
+
+## Getting a sandbox API key
+
+<Steps>
+  <Step title="Create or log in to your account">
+    Go to `https://api.restauranteropro.com` and log in with your partner credentials. If you do not have an account yet, contact dev@restauranteropro.com to get partner access.
+  </Step>
+
+  <Step title="Switch to the sandbox environment">
+    In the Dev Portal, look for the environment toggle in the top navigation bar and switch to **Sandbox**.
+  </Step>
+
+  <Step title="Generate a sandbox API key">
+    Go to **Settings → Integrations → API Keys** and generate a key for the branch you want to test. The key will have the format:
+
+    ```
+    rpro_test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    ```
+
+    <Note>The API Key is shown only once. Copy it immediately — if you lose it, generate a new one. The previous key is revoked automatically.</Note>
+  </Step>
+
+  <Step title="Configure your .env for sandbox">
+    In your Restaurant Controller `.env`, point to the sandbox URL and paste the test key:
+
+    ```bash
+    RESTAURANTERO_BASE_URL=https://sandbox.restauranteropro.com/api/v1
+    RESTAURANTERO_API_KEY=rpro_test_xxxxxxxxxxxxxxxxxxxxxxxx
+    RESTAURANTERO_BRANCH_IDENTIFIER=b1c2d3e4-f5a6-7890-abcd-ef1234567890
+    RESTAURANTERO_ENABLED=true
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Sending test Corte Z cuts
+
+Once configured, trigger Corte Z processing in RC exactly as you would in production — the `RestauranteroProService` will automatically use the sandbox URL from your config. You can also send test data directly over HTTP:
+
+```http
+POST https://sandbox.restauranteropro.com/api/v1/ingest/cash-register
+X-API-Key: rpro_test_xxxxxxxxxxxxxxxxxxxxxxxx
+X-Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
+Content-Type: application/json
+
+{
+  "data": {
+    "type": "cash-register",
+    "attributes": {
+      "branch_identifier": "b1c2d3e4-f5a6-7890-abcd-ef1234567890",
+      "closing_type": "zout",
+      "start_at": "2026-05-15T07:00:00-07:00",
+      "end_at": "2026-05-15T23:45:00-07:00",
+      "status": "completed",
+      "summaries": [
+        { "type": "cash_sales",  "name": "Venta Efectivo", "amount_cents": 125000 },
+        { "type": "card_sales",  "name": "Venta Tarjeta",  "amount_cents": 409550 }
+      ]
+    },
+    "meta": {
+      "pos_name":    "restaurant_controller",
+      "pos_version": "3.2.1",
+      "pos_variant": "full_dining",
+      "sent_at":     "2026-05-15T23:46:00Z"
+    }
+  }
+}
+```
+
+A successful sandbox response looks identical to production:
+
+```json
+{
+  "data": {
+    "type": "cash-register-ingest",
+    "id": "ingest_uuid",
+    "attributes": {
+      "queued": true,
+      "closing_type": "zout",
+      "message": "Corte Z recibido. Los cubos del día se regenerarán en los próximos segundos."
+    }
+  }
+}
+```
+
+<Tip>Send at least three test Corte Z cuts with different dates to verify that the intelligence endpoints return data for a full date range query.</Tip>
+
+---
+
+## Verifying results in the Dev Portal
+
+After sending your test cuts, confirm they were processed correctly:
+
+<Steps>
+  <Step title="Open the Dev Portal logs">
+    In the Dev Portal (sandbox environment), go to **Logs → Ingestion**. You will see a timestamped entry for each POST you sent, along with the full request body, response body, and HTTP status code.
+  </Step>
+
+  <Step title="Check for 202 Accepted responses">
+    Every ingestion endpoint responds `202 Accepted` when the data is queued successfully. If you see `422` or `400`, expand the log entry to read the `error.field` value and fix the payload.
+  </Step>
+
+  <Step title="Wait for snapshot.completed">
+    Cube regeneration takes approximately 5 seconds after the `cash-register` POST. In **Logs → Webhooks**, you will see the `snapshot.completed` event fire once processing is complete. If you have not yet registered a webhook endpoint, check the **Events** tab instead.
+  </Step>
+
+  <Step title="Query the intelligence endpoints">
+    After `snapshot.completed`, query the intelligence endpoints to verify the data is correct:
+
+    ```http
+    GET https://sandbox.restauranteropro.com/api/v1/intelligence/kpis
+    X-API-Key: rpro_test_xxxxxxxxxxxxxxxxxxxxxxxx
+
+    ?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890
+    &date_from=2026-05-15
+    &date_to=2026-05-15
+    ```
+
+    If KPIs, P&L, and alerts return correctly for your test data, the integration is working end to end.
+  </Step>
+</Steps>
+
+---
+
+## Switching to production
+
+Once you have verified at least three end-to-end test cuts and all intelligence endpoints return expected data, switch to production by updating two values in your `.env`:
+
+```bash
+# Before (sandbox)
+RESTAURANTERO_BASE_URL=https://sandbox.restauranteropro.com/api/v1
+RESTAURANTERO_API_KEY=rpro_test_xxxxxxxxxxxxxxxxxxxxxxxx
+
+# After (production)
+RESTAURANTERO_BASE_URL=https://api.restauranteropro.com/api/v1
+RESTAURANTERO_API_KEY=rpro_live_xxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+No code changes are needed — `RestauranteroProService` reads both values from config at runtime.
+
+<Warning>Do not copy sandbox data to production. The `branch_identifier` UUID is the same in both environments, but the data is completely isolated. Production starts with a clean slate when the first real Corte Z arrives.</Warning>
+
+After switching, verify the production connection with a ping:
+
+```http
+GET https://api.restauranteropro.com/api/v1/ping
+X-API-Key: rpro_live_xxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+A `200` response with `"status": "ok"` confirms the production key is active and the branch is connected.

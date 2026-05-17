@@ -1,0 +1,131 @@
+---
+title: "GET /api/v1/intelligence/inventory/suggestions"
+sidebarTitle: "Purchase Suggestions"
+description: "Retrieve AI-powered purchase suggestions grouped by supplier. Suggestions are based on real sales velocity, current inventory, and supplier lead times."
+---
+
+The Purchase Suggestions endpoint returns an AI-generated purchase order grouped by supplier, calculated from real sales velocity over the selected period and the current stock levels recorded in the Restaurantero Pro dashboard. Instead of guessing how much to order, your clients get a ready-to-act shopping list that accounts for how fast each ingredient is selling and how much they have left.
+
+<Warning>
+  This endpoint requires inventory data to be configured in the Restaurantero Pro dashboard. Without current stock levels, suggestions cannot be generated. The restaurant owner must also have sent order line data via `POST /api/v1/ingest/orders` so that sales velocity can be computed.
+</Warning>
+
+## Request
+
+```http
+GET /api/v1/intelligence/inventory/suggestions
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+## Query parameters
+
+<ParamField query="branch_identifier" type="string" required>
+  UUID of the branch to query.
+</ParamField>
+
+<ParamField query="date_from" type="string" required>
+  Start of the period used to calculate sales velocity (`YYYY-MM-DD`). Omit if using `period`.
+</ParamField>
+
+<ParamField query="date_to" type="string" required>
+  End of the period (`YYYY-MM-DD`). Omit if using `period`.
+</ParamField>
+
+<ParamField query="period" type="string">
+  Period shortcut: `today`, `yesterday`, `week`, or `month`.
+</ParamField>
+
+## Response fields
+
+<ResponseField name="data.attributes.generated_at" type="string">
+  ISO 8601 timestamp of when this suggestion list was generated.
+</ResponseField>
+
+<ResponseField name="data.attributes.days_ahead" type="integer">
+  Number of days of inventory coverage the suggestions are designed to provide.
+</ResponseField>
+
+<ResponseField name="data.attributes.by_supplier" type="array">
+  Purchase suggestions grouped by supplier.
+
+  <Expandable title="Supplier object properties">
+    <ResponseField name="supplier_name" type="string">
+      Supplier name as configured in the Restaurantero Pro dashboard.
+    </ResponseField>
+    <ResponseField name="subtotal_cents" type="integer">
+      Total estimated purchase cost from this supplier, in centavos.
+    </ResponseField>
+    <ResponseField name="items" type="array">
+      List of items to purchase from this supplier.
+
+      <Expandable title="Item object properties">
+        <ResponseField name="item_name" type="string">
+          Ingredient or product name.
+        </ResponseField>
+        <ResponseField name="unit" type="string">
+          Unit of measure (e.g., `"kg"`, `"lt"`, `"pza"`).
+        </ResponseField>
+        <ResponseField name="current_stock" type="number">
+          Current stock level in the configured unit of measure.
+        </ResponseField>
+        <ResponseField name="suggested_qty" type="number">
+          Suggested purchase quantity in the configured unit of measure.
+        </ResponseField>
+        <ResponseField name="unit_cost_cents" type="integer">
+          Unit cost as recorded in the dashboard, in centavos.
+        </ResponseField>
+        <ResponseField name="total_cost_cents" type="integer">
+          Total cost for the suggested quantity (`suggested_qty × unit_cost`), in centavos.
+        </ResponseField>
+        <ResponseField name="reason" type="string">
+          Human-readable explanation of why this quantity was suggested, including current stock coverage and projected sales rate.
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="data.attributes.total_suggested_cents" type="integer">
+  Total estimated purchase cost across all suppliers, in centavos.
+</ResponseField>
+
+## Example
+
+```http
+GET /api/v1/intelligence/inventory/suggestions?branch_identifier=b1c2d3e4-f5a6-7890-abcd-ef1234567890&period=week
+X-API-Key: rpro_live_abc123xyz789...
+```
+
+```json
+{
+  "data": {
+    "type": "purchase_suggestions",
+    "attributes": {
+      "generated_at": "2026-05-15T06:00:00Z",
+      "days_ahead": 3,
+      "by_supplier": [
+        {
+          "supplier_name": "Carnes Premium Hermosillo",
+          "items": [
+            {
+              "item_name": "Arrachera USDA Choice",
+              "unit": "kg",
+              "current_stock": 4.5,
+              "suggested_qty": 18.0,
+              "unit_cost_cents": 22000,
+              "total_cost_cents": 396000,
+              "reason": "Stock para 0.8 días — ventas proyectadas de 14 porciones/día"
+            }
+          ],
+          "subtotal_cents": 396000
+        }
+      ],
+      "total_suggested_cents": 645000
+    }
+  }
+}
+```
+
+<Tip>
+  You can pass these suggestions directly into a purchase order workflow in your POS or display them as a checklist for the restaurant's purchasing manager. The `reason` field is designed to be shown as-is in the UI.
+</Tip>
